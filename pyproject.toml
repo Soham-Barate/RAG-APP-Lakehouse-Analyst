@@ -1,0 +1,52 @@
+[project]
+name = "ecommerce-rag-assistant"
+version = "1.0.0"
+description = "Production-grade E-commerce RAG Knowledge Assistant"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "RAG Engineering Team" }]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "TCH"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["backend", "ingestion", "evaluation"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = [
+    "langchain_core.*",
+    "langchain_community.*",
+    "langchain_openai.*",
+    "langchain_cohere.*",
+    "langgraph.*",
+    "pinecone.*",
+    "cohere.*",
+    "groq.*",
+    "presidio_analyzer.*",
+    "presidio_anonymizer.*",
+    "ragas.*",
+    "duckdb.*",
+    "pyiceberg.*",
+    "streamlit.*",
+    "redis.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+addopts = "-v --tb=short"
