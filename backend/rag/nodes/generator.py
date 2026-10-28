@@ -7,7 +7,6 @@ history, and the structured generation prompt with citations.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Any
@@ -44,6 +43,10 @@ class ResponseGenerator:
         context = state.get("compressed_context", "No context available.")
         docs = state.get("reranked_docs", [])
         relevance_scores = state.get("relevance_scores", [])
+        if not docs and state.get("sql_doc"):
+            docs = [state["sql_doc"]]
+            relevance_scores = [1.0]
+
         history = self._format_history(state.get("messages", []))
 
         # Build the generation prompt
@@ -86,7 +89,7 @@ class ResponseGenerator:
                 latency_ms,
             )
 
-            return {
+            out_dict = {
                 "answer": answer.strip(),
                 "confidence_score": confidence,
                 "sources": sources,
@@ -94,6 +97,14 @@ class ResponseGenerator:
                 "generation_latency_ms": round(latency_ms, 2),
                 "tokens_used": self.llm_service.last_token_count,
             }
+            if "sql_query" in state:
+                out_dict["sql_query"] = state["sql_query"]
+            if "sql_results" in state:
+                out_dict["sql_results"] = state["sql_results"]
+            if "sql_error" in state:
+                out_dict["sql_error"] = state["sql_error"]
+
+            return out_dict
 
         except Exception as exc:
             latency_ms = (time.perf_counter() - start) * 1000

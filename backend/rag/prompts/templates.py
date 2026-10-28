@@ -205,3 +205,111 @@ Check for:
 
 Respond with ONLY a JSON object:
 {{"safe": true|false, "reason": "brief explanation"}}"""
+
+# ===================================================================
+# CHAIN OF THOUGHT — internal reasoning before answer generation
+# ===================================================================
+CHAIN_OF_THOUGHT_PROMPT = """You are an analytical reasoning engine. Before answering the user's question, think through the retrieved information step by step.
+
+## User Question
+{query}
+
+## Retrieved Context
+{context}
+
+## Instructions
+Walk through your reasoning process:
+1. **Identify Key Facts**: List the specific facts from each source that are relevant to the question.
+2. **Check Consistency**: Note any contradictions between sources.
+3. **Assess Completeness**: Is the context sufficient to fully answer the question? What's missing?
+4. **Plan the Answer**: Outline how you would structure the answer based on available evidence.
+5. **Confidence Assessment**: Rate how confident you are on a scale of 1-10 and explain why.
+
+Think step by step:"""
+
+# ===================================================================
+# ANSWER VERIFICATION — post-generation claim checking
+# ===================================================================
+VERIFICATION_PROMPT = """You are a fact-checking specialist. Verify every factual claim in the following answer against the provided source context.
+
+## Generated Answer
+{answer}
+
+## Source Context (ground truth)
+{context}
+
+## Instructions
+For each factual claim in the answer:
+1. Check if the claim is directly stated in or logically implied by the source context.
+2. Classify as: SUPPORTED (directly backed), PARTIAL (partially supported), UNSUPPORTED (no basis in sources).
+3. Flag any specific numbers, dates, percentages, or names that cannot be verified.
+
+Respond with ONLY a JSON object:
+{{"supported_claims": <int>, "partial_claims": <int>, "unsupported_claims": <int>, "issues": ["list of specific unverifiable claims"], "overall_verdict": "verified|partially_verified|unverifiable"}}"""
+
+# ===================================================================
+# HALLUCINATION CHECK — NLI-style sentence verification
+# ===================================================================
+HALLUCINATION_CHECK_PROMPT = """You are a Natural Language Inference (NLI) classifier. For each sentence in the answer, determine its relationship to the source context.
+
+## Answer to Check
+{answer}
+
+## Source Context
+{context}
+
+## Instructions
+For each of the {sentence_count} sentences in the answer, classify as:
+- **ENTAILED**: The sentence is directly supported by information in the context.
+- **NEUTRAL**: The sentence is neither supported nor contradicted (may be common knowledge or logical inference).
+- **CONTRADICTED**: The sentence directly contradicts information in the context.
+
+Respond with ONLY a JSON object:
+{{"sentences": [{{"text": "sentence text", "verdict": "entailed|neutral|contradicted", "evidence": "brief supporting evidence or explanation"}}]}}"""
+
+# ===================================================================
+# TEXT-TO-SQL PROMPT — generates safe read-only SQL queries
+# ===================================================================
+TEXT_TO_SQL_PROMPT = """You are a senior SQL data engineer. Translate the user query into a safe, valid DuckDB SQL query.
+
+## Schema
+Table: products
+- product_id (VARCHAR)
+- name (VARCHAR)
+- category (VARCHAR)
+- price (FLOAT)
+- rating (FLOAT)
+- review_count (INTEGER)
+- sku (VARCHAR)
+- in_stock (BOOLEAN)
+- department (VARCHAR)
+
+Table: orders
+- order_id (VARCHAR)
+- customer_id (VARCHAR)
+- order_date (VARCHAR ISO timestamp)
+- status (VARCHAR: 'delivered', 'shipped', 'processing', 'cancelled', 'returned')
+- total_amount (FLOAT)
+- item_count (INTEGER)
+- payment_method (VARCHAR)
+- shipping_method (VARCHAR)
+
+Table: customers
+- customer_id (VARCHAR)
+- tier (VARCHAR: 'Bronze', 'Silver', 'Gold', 'Platinum')
+- total_orders (INTEGER)
+- total_spent (FLOAT)
+- join_date (VARCHAR ISO timestamp)
+- preferred_category (VARCHAR)
+
+## Strict Rules
+1. ONLY produce a single SELECT statement. No INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, ATTACH, or PRAGMA.
+2. Only use the allowlisted tables: `products`, `orders`, `customers`.
+3. Always include LIMIT (maximum 50).
+4. Do not include markdown code block formatting or explanations. Output pure JSON.
+
+User query: {query}
+
+Respond with ONLY a JSON object:
+{{"sql": "SELECT ... LIMIT 50", "explanation": "brief description"}}"""
+

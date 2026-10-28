@@ -4,7 +4,6 @@ Data ingestion API endpoints.
 
 from __future__ import annotations
 
-import time
 import uuid
 
 import structlog
@@ -107,8 +106,8 @@ async def ingest_synthetic_data(
     await logger.ainfo("synthetic_ingestion_started", job_id=job_id)
 
     async def _generate_and_ingest() -> None:
-        from ingestion.synthetic.data_generator import SyntheticDataGenerator
         from ingestion.pipeline import IngestionPipeline
+        from ingestion.synthetic.data_generator import SyntheticDataGenerator
 
         try:
             generator = SyntheticDataGenerator()

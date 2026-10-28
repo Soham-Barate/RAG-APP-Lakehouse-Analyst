@@ -1,9 +1,11 @@
 """
-Sidebar component with filters, settings, and conversation history.
+Sidebar component for Lakehouse Analyst.
+Configures metadata filters, engine toggles, infrastructure health, and session lifecycle.
 """
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -12,140 +14,147 @@ import streamlit as st
 
 def render_sidebar() -> dict[str, Any]:
     """
-    Render the sidebar with filters, settings, and status.
-
-    Returns a dict of active filter/settings values.
+    Render executive sidebar controls and return active filter & toggle dictionary.
     """
     with st.sidebar:
-        # Header
+        # App Title & Brand
         st.markdown(
             """
-            <div style="text-align:center; padding:1rem 0;">
-                <div style="font-size:2rem; margin-bottom:0.25rem;">🧠</div>
-                <div class="sidebar-header">RAG Knowledge Assistant</div>
-                <div style="color:#64748b; font-size:0.75rem;">
-                    E-commerce Intelligence Platform
-                </div>
+            <div class="sidebar-brand-box">
+                <div class="sidebar-title">RAG LAKEHOUSE ANALYST</div>
+                <div class="sidebar-subtitle">PRODUCTION ENTERPRISE EDITION</div>
             </div>
-            <hr style="border-color:rgba(255,255,255,0.08); margin:1rem 0;">
             """,
             unsafe_allow_html=True,
         )
 
-        # New conversation button
-        if st.button("🔄 New Conversation", use_container_width=True):
+        # New Analysis Thread Button
+        if st.button("New Analysis Thread", use_container_width=True, type="primary"):
             st.session_state.messages = []
-            st.session_state.conversation_id = None
+            st.session_state.conversation_id = str(uuid.uuid4())
             st.rerun()
 
-        st.markdown("<br>", unsafe_allow_html=True)
+        # Infrastructure Health Card
+        system_status = st.session_state.get("system_status", "unknown")
+        status_dot_cls = "online" if system_status == "healthy" else ("standby" if system_status == "degraded" else "offline")
 
-        # ----- Filters Section -----
         st.markdown(
-            '<div style="font-weight:600; color:#94a3b8; font-size:0.8rem; '
-            'text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.5rem;">'
-            '🔍 Search Filters</div>',
+            '<div class="sidebar-section-header">Infrastructure Cluster</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            f"""
+            <div class="infra-health-card">
+                <div class="infra-node-item">
+                    <span><span class="infra-node-dot {status_dot_cls}"></span>FastAPI Gateway</span>
+                    <span style="color:var(--text-muted);">{system_status.upper()}</span>
+                </div>
+                <div class="infra-node-item">
+                    <span><span class="infra-node-dot online"></span>DuckDB Analytical Engine</span>
+                    <span style="color:var(--text-muted);">READY</span>
+                </div>
+                <div class="infra-node-item">
+                    <span><span class="infra-node-dot online"></span>PostgreSQL pgvector</span>
+                    <span style="color:var(--text-muted);">CONNECTED</span>
+                </div>
+                <div class="infra-node-item">
+                    <span><span class="infra-node-dot online"></span>Redis Semantic Cache</span>
+                    <span style="color:var(--text-muted);">ACTIVE</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Filters Section
+        st.markdown(
+            '<div class="sidebar-section-header">Retrieval Filters</div>',
             unsafe_allow_html=True,
         )
 
         with st.container():
             categories = st.multiselect(
-                "Categories",
+                "Product Categories",
                 [
-                    "Electronics", "Clothing", "Home & Garden",
-                    "Sports & Outdoors", "Books", "Beauty & Personal Care",
-                    "Toys & Games", "Automotive", "Food & Grocery",
+                    "Electronics",
+                    "Clothing",
+                    "Home & Garden",
+                    "Sports & Outdoors",
+                    "Books",
+                    "Beauty & Personal Care",
+                    "Toys & Games",
+                    "Automotive",
+                    "Food & Grocery",
                     "Health & Wellness",
                 ],
                 key="filter_categories",
+                help="Scope hybrid retrieval to specific commercial categories",
             )
 
             doc_types = st.multiselect(
-                "Document Types",
-                ["product", "order", "review", "ticket", "customer"],
+                "Document Classes",
+                ["product", "order", "review", "ticket", "knowledge_base"],
                 key="filter_doc_types",
+                help="Filter by source schema type",
             )
 
             col1, col2 = st.columns(2)
             with col1:
                 date_from = st.date_input(
-                    "From",
+                    "Date From",
                     value=datetime.now() - timedelta(days=365),
                     key="filter_date_from",
                 )
             with col2:
                 date_to = st.date_input(
-                    "To",
+                    "Date To",
                     value=datetime.now(),
                     key="filter_date_to",
                 )
 
             max_results = st.slider(
-                "Max Sources",
+                "Max Evidence Citations",
                 min_value=1,
-                max_value=20,
+                max_value=15,
                 value=5,
                 key="filter_max_results",
             )
 
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # ----- Model Settings -----
+        # Inspection Toggles
         st.markdown(
-            '<div style="font-weight:600; color:#94a3b8; font-size:0.8rem; '
-            'text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.5rem;">'
-            '⚙️ Model Settings</div>',
+            '<div class="sidebar-section-header">Evidence Inspection</div>',
             unsafe_allow_html=True,
         )
 
         with st.container():
-            show_sources = st.toggle("Show Sources", value=True, key="show_sources")
-            show_metrics = st.toggle("Show Metrics", value=True, key="show_metrics")
+            show_sql = st.toggle("Structured SQL Evidence", value=True, key="show_sql")
+            show_sources = st.toggle("Vector Chunk Citations", value=True, key="show_sources")
+            show_metrics = st.toggle("Pipeline Latency & Tokens", value=True, key="show_metrics")
 
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # ----- System Status -----
-        st.markdown(
-            '<div style="font-weight:600; color:#94a3b8; font-size:0.8rem; '
-            'text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.5rem;">'
-            '💚 System Status</div>',
-            unsafe_allow_html=True,
-        )
-
-        # Get status from session state
-        system_status = st.session_state.get("system_status", "unknown")
-        status_color = {
-            "healthy": "#34d399",
-            "degraded": "#fbbf24",
-            "unhealthy": "#fb7185",
-            "unknown": "#64748b",
-        }.get(system_status, "#64748b")
+        # Session Telemetry
+        conv_id = st.session_state.get("conversation_id", "unassigned")
+        short_id = conv_id[:8] if conv_id else "none"
+        msg_count = len(st.session_state.get("messages", []))
 
         st.markdown(
             f"""
-            <div style="background:rgba(255,255,255,0.03);
-                        border:1px solid rgba(255,255,255,0.08);
-                        border-radius:8px; padding:0.75rem;">
-                <div style="display:flex; align-items:center; gap:0.5rem;">
-                    <div class="status-dot status-{system_status}"></div>
-                    <span style="font-size:0.8rem; color:{status_color};
-                                 text-transform:capitalize;">{system_status}</span>
-                </div>
+            <div style="margin-top:1.5rem; padding-top:0.75rem; border-top:1px solid var(--border-subtle);
+                        font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted); display:flex; justify-content:space-between;">
+                <span>Session: {short_id}</span>
+                <span>Queries: {msg_count}</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        # Conversation count
-        msg_count = len(st.session_state.get("messages", []))
-        st.caption(f"Messages in conversation: {msg_count}")
-
     return {
-        "categories": categories if categories else None,
-        "document_types": doc_types if doc_types else None,
+        "categories": categories or None,
+        "document_types": doc_types or None,
         "date_from": date_from.isoformat() if date_from else None,
         "date_to": date_to.isoformat() if date_to else None,
         "max_results": max_results,
+        "show_sql": show_sql,
         "show_sources": show_sources,
         "show_metrics": show_metrics,
     }

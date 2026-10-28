@@ -4,9 +4,10 @@ Health and readiness probe endpoints.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, status
+from fastapi.responses import JSONResponse
 
 from backend.core.schemas import HealthResponse
 from config.settings import get_settings
@@ -38,10 +39,14 @@ async def health_check(request: Request) -> HealthResponse:
     db_engine = getattr(request.app.state, "db_engine", None)
     if db_engine:
         try:
+            import asyncio
             from sqlalchemy import text
 
-            async with db_engine.begin() as conn:
-                await conn.execute(text("SELECT 1"))
+            async def _check_db():
+                async with db_engine.begin() as conn:
+                    await conn.execute(text("SELECT 1"))
+
+            await asyncio.wait_for(_check_db(), timeout=1.5)
             services["postgres"] = "healthy"
         except Exception:
             services["postgres"] = "unhealthy"
@@ -50,31 +55,52 @@ async def health_check(request: Request) -> HealthResponse:
 
     # Check vector store
     vector_store = getattr(request.app.state, "vector_store", None)
-    if vector_store:
-        services["vector_store"] = "healthy"
-    else:
-        services["vector_store"] = "not_configured"
+    services["vector_store"] = "healthy" if vector_store is not None else "not_configured"
 
-    # Overall status
+    # Check LLM service
+    llm_service = getattr(request.app.state, "llm_service", None)
+    services["llm_service"] = "healthy" if llm_service is not None else "not_configured"
+
+    # Check RAG graph
+    rag_graph = getattr(request.app.state, "rag_graph", None)
+    services["rag_pipeline"] = "healthy" if rag_graph is not None else "not_initialized"
+
+    # Overall status (Redis failure is degraded, critical service failure makes it unhealthy)
+    critical_unhealthy = [
+        k for k, v in services.items()
+        if k in ("postgres", "vector_store", "llm_service", "rag_pipeline") and v in ("unhealthy", "not_configured", "not_initialized")
+    ]
     unhealthy = [k for k, v in services.items() if v == "unhealthy"]
-    overall = "degraded" if unhealthy else "healthy"
+
+    if critical_unhealthy and settings.app_env.value != "development":
+        overall = "unhealthy"
+    elif unhealthy or critical_unhealthy:
+        overall = "degraded"
+    else:
+        overall = "healthy"
 
     return HealthResponse(
         status=overall,
         version="1.0.0",
         environment=settings.app_env.value,
         services=services,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
     )
 
 
 @router.get("/ready")
-async def readiness_check(request: Request) -> dict[str, str]:
+async def readiness_check(request: Request) -> JSONResponse:
     """
-    Readiness probe — returns ready only when all critical services
-    are connected and the pipeline is initialized.
+    Readiness probe — returns HTTP 200 only when all critical services
+    are connected and the pipeline is initialized, or HTTP 503 when not ready.
     """
     rag_graph = getattr(request.app.state, "rag_graph", None)
     if rag_graph is None:
-        return {"status": "not_ready", "reason": "RAG pipeline not initialized"}
-    return {"status": "ready"}
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "not_ready", "reason": "RAG pipeline not initialized"},
+        )
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"status": "ready"},
+    )

@@ -139,6 +139,15 @@ class ChatResponse(BaseModel):
     sources: list[SourceDocument] = Field(
         default_factory=list, description="Retrieved source documents"
     )
+    sql_query: str | None = Field(
+        default=None, description="Executed SQL query if structured lakehouse path was used"
+    )
+    sql_results: list[dict[str, Any]] | None = Field(
+        default=None, description="Structured query results if analytical path was used"
+    )
+    route: str | None = Field(
+        default=None, description="Pipeline route chosen: sql, vector, or hybrid"
+    )
     metrics: PipelineMetrics = Field(description="Pipeline performance metrics")
     disclaimer: str | None = Field(
         default=None, description="Added when confidence is low"

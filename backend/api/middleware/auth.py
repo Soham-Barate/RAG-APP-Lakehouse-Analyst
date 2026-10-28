@@ -8,7 +8,7 @@ expansion.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import Depends, HTTPException, Security, status
@@ -59,7 +59,7 @@ def create_jwt_token(
         raise RuntimeError("python-jose is required for JWT support")
 
     settings = settings or get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(
+    expire = datetime.now(UTC) + timedelta(
         minutes=settings.jwt_expiration_minutes
     )
     to_encode = {**data, "exp": expire}
@@ -76,7 +76,8 @@ def decode_jwt_token(
 ) -> dict[str, Any]:
     """Decode and verify a JWT token. Stub for future auth expansion."""
     try:
-        from jose import JWTError, jwt as jose_jwt
+        from jose import JWTError
+        from jose import jwt as jose_jwt
     except ImportError:
         raise RuntimeError("python-jose is required for JWT support")
 

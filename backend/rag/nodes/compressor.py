@@ -39,8 +39,11 @@ class ContextualCompressor:
         """Compress reranked documents into a focused context string."""
         docs = state.get("reranked_docs", [])
         query = state["query"]
+        sql_context = state.get("sql_context")
 
         if not docs:
+            if sql_context:
+                return {"compressed_context": sql_context}
             return {"compressed_context": "No relevant documents found."}
 
         # Format documents for the compressor prompt
@@ -66,12 +69,18 @@ class ContextualCompressor:
                 (1 - len(compressed) / max(len(docs_text), 1)) * 100,
             )
 
-            return {"compressed_context": compressed.strip()}
+            final_text = compressed.strip()
+            if sql_context:
+                final_text = f"{sql_context}\n\n### Qualitative Product & Knowledge Context\n{final_text}"
+
+            return {"compressed_context": final_text}
 
         except Exception as exc:
             logger.warning("Compression failed, using raw context: %s", exc)
             # Fallback: concatenate document contents directly
             fallback = self._create_fallback_context(docs)
+            if sql_context:
+                fallback = f"{sql_context}\n\n### Qualitative Product & Knowledge Context\n{fallback}"
             return {"compressed_context": fallback}
 
     def _format_documents(self, docs: list[dict[str, Any]]) -> str:

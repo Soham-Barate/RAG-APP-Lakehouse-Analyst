@@ -1,24 +1,73 @@
 """
-Chat interface component for rendering messages.
+Chat interface components for executive message rendering, starter queries, and metrics.
+Adheres strictly to zero-emoji design system, deterministic typography, and Linear/Apple craft.
 """
 
 from __future__ import annotations
 
+import html
 from typing import Any
 
 import streamlit as st
 
+# Clean SVG Icon Primitives
+SVG_USER = (
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path>'
+    '<circle cx="12" cy="7" r="4"></circle></svg>'
+)
+
+SVG_BOT = (
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    '<rect x="2" y="3" width="20" height="14" rx="2"></rect>'
+    '<line x1="8" y1="21" x2="16" y2="21"></line>'
+    '<line x1="12" y1="17" x2="12" y2="21"></line></svg>'
+)
+
+SVG_ANALYTICS = (
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    '<line x1="18" y1="20" x2="18" y2="10"></line>'
+    '<line x1="12" y1="20" x2="12" y2="4"></line>'
+    '<line x1="6" y1="20" x2="6" y2="14"></line></svg>'
+)
+
+SVG_ORDERS = (
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    '<rect x="1" y="3" width="15" height="13"></rect>'
+    '<polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon>'
+    '<circle cx="5.5" cy="18.5" r="2.5"></circle>'
+    '<circle cx="18.5" cy="18.5" r="2.5"></circle></svg>'
+)
+
+SVG_PRODUCTS = (
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>'
+    '<polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>'
+    '<line x1="12" y1="22.08" x2="12" y2="12"></line></svg>'
+)
+
+SVG_RETURNS = (
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    '<polyline points="1 4 1 10 7 10"></polyline>'
+    '<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>'
+)
+
 
 def render_user_message(message: str) -> None:
-    """Render a user message bubble."""
+    """Render an executive user query bubble."""
+    safe_msg = html.escape(message).replace("\n", "<br>")
     st.markdown(
         f"""
-        <div class="user-message">
-            <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
-                <span style="font-size:1.1rem;">👤</span>
-                <span style="font-weight:600; color:#e2e8f0; font-size:0.85rem;">You</span>
+        <div class="message-row-user">
+            <div class="user-bubble">
+                {safe_msg}
             </div>
-            <div style="color:#cbd5e1; line-height:1.6;">{message}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -28,62 +77,79 @@ def render_user_message(message: str) -> None:
 def render_assistant_message(
     message: str,
     confidence: float = 0.0,
+    route: str | None = None,
     disclaimer: str | None = None,
     message_id: str = "",
 ) -> None:
-    """Render an assistant message bubble with confidence badge."""
-    # Confidence badge
-    if confidence >= 0.7:
-        badge_class = "confidence-high"
-        badge_text = f"✓ High confidence ({confidence:.0%})"
-    elif confidence >= 0.4:
-        badge_class = "confidence-medium"
-        badge_text = f"~ Medium confidence ({confidence:.0%})"
+    """
+    Render an assistant analysis response with route badge and calibrated confidence score.
+    """
+    # Calibrated confidence categorization
+    if confidence >= 0.70:
+        conf_class = "confidence-high"
+        conf_label = f"HIGH CONFIDENCE {confidence:.0%}"
+    elif confidence >= 0.40:
+        conf_class = "confidence-med"
+        conf_label = f"MED CONFIDENCE {confidence:.0%}"
     else:
-        badge_class = "confidence-low"
-        badge_text = f"⚠ Low confidence ({confidence:.0%})"
+        conf_class = "confidence-low"
+        conf_label = f"LOW CONFIDENCE {confidence:.0%}"
 
+    # Route indicator badge
+    route_html = ""
+    if route:
+        r_clean = route.lower()
+        if "sql" in r_clean:
+            route_html = '<span class="route-tag route-sql">SQL EXECUTION</span>'
+        elif "vector" in r_clean:
+            route_html = '<span class="route-tag route-vector">VECTOR RETRIEVAL</span>'
+        else:
+            route_html = '<span class="route-tag route-hybrid">HYBRID LAKEHOUSE</span>'
+
+    # Low-confidence disclaimer
     disclaimer_html = ""
     if disclaimer:
+        safe_disc = html.escape(disclaimer)
         disclaimer_html = f"""
-        <div style="background:rgba(251,191,36,0.1); border:1px solid rgba(251,191,36,0.3);
-                     border-radius:8px; padding:0.5rem 0.75rem; margin-top:0.75rem;
-                     font-size:0.8rem; color:#fbbf24;">
-            {disclaimer}
+        <div class="assistant-disclaimer">
+            <strong>System Notice:</strong> {safe_disc}
         </div>
         """
 
     st.markdown(
         f"""
-        <div class="assistant-message">
-            <div style="display:flex; align-items:center; justify-content:space-between;
-                        margin-bottom:0.5rem;">
-                <div style="display:flex; align-items:center; gap:0.5rem;">
-                    <span style="font-size:1.1rem;">🤖</span>
-                    <span style="font-weight:600; color:#e2e8f0; font-size:0.85rem;">
-                        RAG Assistant
-                    </span>
+        <div class="message-row-assistant">
+            <div class="assistant-header-bar">
+                <div class="assistant-title-group">
+                    <div class="assistant-icon-box">{SVG_BOT}</div>
+                    <span class="assistant-name">Lakehouse Analyst</span>
+                    {route_html}
                 </div>
-                <span class="confidence-badge {badge_class}">{badge_text}</span>
+                <div class="header-badges-right">
+                    <span class="confidence-pill {conf_class}">{conf_label}</span>
+                </div>
             </div>
-            <div style="color:#cbd5e1; line-height:1.7;">{message}</div>
-            {disclaimer_html}
-        </div>
+            <div class="assistant-body">
         """,
         unsafe_allow_html=True,
     )
 
+    # Render message markdown natively inside Streamlit for math and code formatting
+    st.markdown(message)
+
+    if disclaimer_html:
+        st.markdown(disclaimer_html, unsafe_allow_html=True)
+
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
 
 def render_typing_indicator() -> None:
-    """Show a typing indicator while the assistant is generating."""
+    """Render a subtle, linear-style pulse loading indicator."""
     st.markdown(
         """
-        <div class="typing-indicator">
-            <span>🤖</span>
-            <span>RAG Assistant is thinking</span>
-            <div class="loading-dots">
-                <span></span><span></span><span></span>
-            </div>
+        <div class="skeleton-loader-bar">
+            <div class="skeleton-pulse-ring"></div>
+            <span class="skeleton-text">Executing RAG lakehouse pipeline...</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -91,36 +157,34 @@ def render_typing_indicator() -> None:
 
 
 def render_metrics_panel(metrics: dict[str, Any]) -> None:
-    """Render pipeline performance metrics."""
+    """Render real pipeline performance metrics in an executive ribbon."""
     latency = metrics.get("total_latency_ms", 0)
     tokens = metrics.get("tokens_used", 0)
-    iterations = metrics.get("retrieval_iterations", 1)
     docs_retrieved = metrics.get("documents_retrieved", 0)
+    docs_reranked = metrics.get("documents_after_rerank", 0)
     cache_hit = metrics.get("cache_hit", False)
+
+    cache_badge = "HIT" if cache_hit else "MISS"
+    cache_color = "var(--status-success)" if cache_hit else "var(--text-muted)"
 
     st.markdown(
         f"""
-        <div class="metrics-panel">
-            <div class="metric-card">
-                <div class="metric-value">{latency:.0f}ms</div>
-                <div class="metric-label">Latency</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-value">{tokens:,}</div>
-                <div class="metric-label">Tokens Used</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-value">{docs_retrieved}</div>
-                <div class="metric-label">Docs Retrieved</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-value">{iterations}</div>
-                <div class="metric-label">Iterations</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-value">{"✓" if cache_hit else "✗"}</div>
-                <div class="metric-label">Cache Hit</div>
-            </div>
+        <div class="metrics-ribbon">
+            <span class="metric-pill-item">
+                Latency: <strong>{latency:.0f}ms</strong>
+            </span>
+            <span class="metric-pill-item">
+                Tokens: <strong>{tokens:,}</strong>
+            </span>
+            <span class="metric-pill-item">
+                Retrieved: <strong>{docs_retrieved} docs</strong>
+            </span>
+            <span class="metric-pill-item">
+                After Rerank: <strong>{docs_reranked}</strong>
+            </span>
+            <span class="metric-pill-item">
+                Semantic Cache: <strong style="color:{cache_color};">{cache_badge}</strong>
+            </span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -128,42 +192,53 @@ def render_metrics_panel(metrics: dict[str, Any]) -> None:
 
 
 def render_starter_prompts() -> str | None:
-    """Render starter prompt cards for new conversations."""
+    """
+    Render 4 focused analytical preset queries.
+    Returns the selected query string if clicked, else None.
+    """
     starters = [
         {
-            "icon": "📊",
-            "title": "Sales Analytics",
-            "desc": "Analyze sales trends and revenue",
-            "query": "What are the top-selling product categories this quarter and how do they compare to last quarter?",
+            "tag": "SQL REVENUE",
+            "title": "Quarterly Revenue by Category",
+            "desc": "Aggregate sales, revenue trends, and comparative performance across product lines.",
+            "query": "Show me the top 5 product categories by revenue this quarter and compare them to last quarter.",
         },
         {
-            "icon": "📦",
-            "title": "Order Insights",
-            "desc": "Track orders and fulfillment",
-            "query": "Show me the current order fulfillment rates and any shipping delays by region.",
+            "tag": "SQL LOGISTICS",
+            "title": "Fulfillment Rates & Delays",
+            "desc": "Analyze fulfillment times, regional logistics bottlenecks, and transit latency.",
+            "query": "What are our current order fulfillment rates and what shipping delays exist by region?",
         },
         {
-            "icon": "⭐",
-            "title": "Customer Reviews",
-            "desc": "Sentiment and satisfaction analysis",
-            "query": "What are customers saying about our electronics products? Summarize the main complaints and praises.",
+            "tag": "HYBRID AUDIT",
+            "title": "Defect & Return Rate Correlation",
+            "desc": "Cross-reference structured return volume against unstructured review complaints.",
+            "query": "Which products have the highest return rates, and what are the primary customer complaints for them?",
         },
         {
-            "icon": "🔄",
-            "title": "Returns Analysis",
-            "desc": "Understand return patterns",
-            "query": "Which products have the highest return rates and what are the primary reasons for returns?",
+            "tag": "VECTOR SENTIMENT",
+            "title": "Customer Voice & Praise",
+            "desc": "Synthesize unstructured review feedback, satisfaction patterns, and feature sentiment.",
+            "query": "Summarize customer feedback and satisfaction themes for newly launched electronics products.",
         },
     ]
 
+    st.markdown(
+        """
+        <div class="starter-headline">
+            <span style="font-size:0.75rem; font-family:var(--font-mono); color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;">
+                Quick Analytical Directives
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     cols = st.columns(2)
-    for i, starter in enumerate(starters):
+    for i, item in enumerate(starters):
         with cols[i % 2]:
-            if st.button(
-                f"{starter['icon']} **{starter['title']}**\n\n{starter['desc']}",
-                key=f"starter_{i}",
-                use_container_width=True,
-            ):
-                return starter["query"]
+            button_label = f"[{item['tag']}] {item['title']}\n{item['desc']}"
+            if st.button(button_label, key=f"starter_query_{i}", use_container_width=True):
+                return item["query"]
 
     return None

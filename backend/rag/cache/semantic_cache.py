@@ -37,71 +37,113 @@ class SemanticCache:
         similarity_threshold: float = 0.95,
         ttl_seconds: int = 3600,
         max_cache_entries: int = 10000,
+        max_entries_per_partition: int = 500,
     ) -> None:
         self.redis = redis_client
         self.embedding_service = embedding_service
         self.similarity_threshold = similarity_threshold
         self.ttl_seconds = ttl_seconds
         self.max_cache_entries = max_cache_entries
+        self.max_entries_per_partition = max_entries_per_partition
 
         self._cache_key_embeddings = "rag:cache:embeddings"
         self._cache_key_responses = "rag:cache:responses"
+        self._cache_key_timestamps = "rag:cache:timestamps"
         self._cache_key_index = "rag:cache:index"
 
-    async def get(self, query: str) -> dict[str, Any] | None:
-        """
-        Look up a semantically similar cached response.
+    @staticmethod
+    def _normalize_filter_key(filters: dict[str, Any] | None) -> str:
+        """Produce a deterministic, compact filter fingerprint to prevent cross-filter cache leakage."""
+        if not filters:
+            return "global"
+        try:
+            clean = {k: v for k, v in sorted(filters.items()) if v is not None}
+            if not clean:
+                return "global"
+            import hashlib
+            serialized = json.dumps(clean, sort_keys=True)
+            return hashlib.sha256(serialized.encode()).hexdigest()[:8]
+        except Exception:
+            return "global"
 
-        Returns the cached response dict if a match is found
-        above the similarity threshold, otherwise None.
+    async def get(
+        self,
+        query: str,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Look up a semantically similar cached response within the same filter scope.
+
+        Uses batch matrix cosine similarity for fast lookup performance.
         """
         if not self.redis:
             return None
 
         try:
-            # Embed the query
-            query_embedding = await self.embedding_service.embed_query(query)
+            # First, clean expired entries
+            await self._evict_expired()
 
-            # Get all cached embeddings
+            filter_scope = self._normalize_filter_key(filters)
+            prefix = f"{filter_scope}:"
+
+            # Get all cached embeddings in one call
             cached_entries = await self.redis.hgetall(self._cache_key_embeddings)
-
             if not cached_entries:
                 return None
 
-            best_key: str | None = None
-            best_score: float = 0.0
+            # Filter entries matching this filter scope
+            keys: list[str] = []
+            emb_list: list[np.ndarray] = []
 
+            for raw_key, emb_bytes in cached_entries.items():
+                key_str = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+                if not key_str.startswith(prefix):
+                    continue
+
+                raw = emb_bytes if isinstance(emb_bytes, bytes) else emb_bytes.encode()
+                emb_list.append(np.frombuffer(raw, dtype=np.float32).copy())
+                keys.append(key_str)
+
+            if not emb_list:
+                return None
+
+            # Embed query
+            query_embedding = await self.embedding_service.embed_query(query)
+
+            # Vectorised cosine similarity: matrix multiply
             query_arr = np.array(query_embedding, dtype=np.float32)
+            matrix = np.stack(emb_list)  # (N, D)
 
-            for cache_key, emb_bytes in cached_entries.items():
-                cached_emb = np.frombuffer(
-                    emb_bytes if isinstance(emb_bytes, bytes) else emb_bytes.encode(),
-                    dtype=np.float32,
-                )
+            # Normalise
+            query_norm = query_arr / (np.linalg.norm(query_arr) + 1e-8)
+            row_norms = np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-8
+            matrix_norm = matrix / row_norms
 
-                # Cosine similarity
-                sim = float(np.dot(query_arr, cached_emb) / (
-                    np.linalg.norm(query_arr) * np.linalg.norm(cached_emb) + 1e-8
-                ))
+            similarities = matrix_norm @ query_norm  # (N,)
 
-                if sim > best_score:
-                    best_score = sim
-                    if isinstance(cache_key, bytes):
-                        best_key = cache_key.decode()
-                    else:
-                        best_key = cache_key
+            best_idx = int(np.argmax(similarities))
+            best_score = float(similarities[best_idx])
 
-            if best_key and best_score >= self.similarity_threshold:
-                # Cache hit — retrieve the response
+            if best_score >= self.similarity_threshold:
+                best_key = keys[best_idx]
                 response_bytes = await self.redis.hget(
                     self._cache_key_responses, best_key
                 )
                 if response_bytes:
                     if isinstance(response_bytes, bytes):
                         response_bytes = response_bytes.decode()
+
+                    # Update timestamp on hit for LRU retention
+                    try:
+                        await self.redis.zadd(
+                            self._cache_key_timestamps, {best_key: time.time()}
+                        )
+                    except Exception:
+                        pass
+
                     logger.info(
-                        "Cache hit: similarity=%.4f, key=%s",
-                        best_score, best_key[:20]
+                        "Cache hit: similarity=%.4f, scope=%s, key=%s",
+                        best_score, filter_scope, best_key[:20],
                     )
                     return json.loads(response_bytes)
 
@@ -111,21 +153,28 @@ class SemanticCache:
             logger.warning("Semantic cache lookup failed: %s", exc)
             return None
 
-    async def set(self, query: str, response: dict[str, Any]) -> None:
+    async def set(
+        self,
+        query: str,
+        response: dict[str, Any],
+        filters: dict[str, Any] | None = None,
+    ) -> None:
         """
-        Cache a query-response pair.
+        Cache a query-response pair scoped to the active filters.
 
-        Stores the query embedding and the serialized response with TTL.
+        Stores the query embedding, serialized response, and eviction timestamp.
         """
         if not self.redis:
             return
 
         try:
-            query_embedding = await self.embedding_service.embed_query(query)
-
-            # Generate a cache key from the query hash
             import hashlib
-            cache_key = hashlib.sha256(query.encode()).hexdigest()[:16]
+
+            filter_scope = self._normalize_filter_key(filters)
+            query_hash = hashlib.sha256(query.encode()).hexdigest()[:16]
+            cache_key = f"{filter_scope}:{query_hash}"
+
+            query_embedding = await self.embedding_service.embed_query(query)
 
             # Store embedding as bytes
             emb_bytes = np.array(query_embedding, dtype=np.float32).tobytes()
@@ -135,16 +184,16 @@ class SemanticCache:
             response_json = json.dumps(response, default=str)
             await self.redis.hset(self._cache_key_responses, cache_key, response_json)
 
-            # Set TTL on the hash keys
-            await self.redis.expire(self._cache_key_embeddings, self.ttl_seconds)
-            await self.redis.expire(self._cache_key_responses, self.ttl_seconds)
+            # Track entry creation timestamp for per-item TTL / LRU eviction
+            now = time.time()
+            await self.redis.zadd(self._cache_key_timestamps, {cache_key: now})
 
-            # Enforce max cache size (evict oldest if needed)
-            cache_size = await self.redis.hlen(self._cache_key_embeddings)
-            if cache_size > self.max_cache_entries:
-                await self._evict_oldest()
+            # Enforce max cache size and remove expired items
+            await self._evict_expired()
+            await self._evict_partition_excess(filter_scope)
+            await self._evict_oldest()
 
-            logger.debug("Cached response for key: %s", cache_key)
+            logger.debug("Cached response for scope %s, key: %s", filter_scope, cache_key)
 
         except Exception as exc:
             logger.warning("Semantic cache set failed: %s", exc)
@@ -158,6 +207,7 @@ class SemanticCache:
             await self.redis.delete(
                 self._cache_key_embeddings,
                 self._cache_key_responses,
+                self._cache_key_timestamps,
                 self._cache_key_index,
             )
             logger.info("Semantic cache invalidated")
@@ -171,26 +221,75 @@ class SemanticCache:
 
         try:
             size = await self.redis.hlen(self._cache_key_embeddings)
-            ttl = await self.redis.ttl(self._cache_key_embeddings)
             return {
                 "status": "active",
                 "entries": size,
-                "ttl_remaining": ttl,
+                "ttl_seconds": self.ttl_seconds,
                 "max_entries": self.max_cache_entries,
+                "max_entries_per_partition": self.max_entries_per_partition,
                 "similarity_threshold": self.similarity_threshold,
             }
         except Exception:
             return {"status": "error"}
 
-    async def _evict_oldest(self) -> None:
-        """Evict entries to maintain max cache size."""
+    async def _evict_expired(self) -> None:
+        """Evict entries whose age exceeds ttl_seconds."""
         try:
-            # Simple strategy: remove random entries to get below limit
-            entries = await self.redis.hkeys(self._cache_key_embeddings)
-            if len(entries) > self.max_cache_entries:
-                to_remove = entries[: len(entries) - self.max_cache_entries]
-                for key in to_remove:
-                    await self.redis.hdel(self._cache_key_embeddings, key)
-                    await self.redis.hdel(self._cache_key_responses, key)
+            cutoff = time.time() - self.ttl_seconds
+            expired_keys = await self.redis.zrangebyscore(
+                self._cache_key_timestamps, 0, cutoff
+            )
+            if expired_keys:
+                for k in expired_keys:
+                    key_str = k.decode() if isinstance(k, bytes) else k
+                    await self.redis.hdel(self._cache_key_embeddings, key_str)
+                    await self.redis.hdel(self._cache_key_responses, key_str)
+                    await self.redis.zrem(self._cache_key_timestamps, key_str)
+                logger.debug("Evicted %d expired cache entries", len(expired_keys))
         except Exception as exc:
-            logger.warning("Cache eviction failed: %s", exc)
+            logger.warning("Cache TTL eviction failed: %s", exc)
+
+    async def _evict_partition_excess(self, filter_scope: str) -> None:
+        """Evict oldest entries in a specific partition if it exceeds max_entries_per_partition."""
+        if not self.max_entries_per_partition or self.max_entries_per_partition <= 0:
+            return
+        try:
+            prefix = f"{filter_scope}:"
+            all_keys = await self.redis.zrange(self._cache_key_timestamps, 0, -1)
+            partition_keys = []
+            for k in all_keys:
+                key_str = k.decode() if isinstance(k, bytes) else k
+                if key_str.startswith(prefix):
+                    partition_keys.append(key_str)
+
+            if len(partition_keys) > self.max_entries_per_partition:
+                excess_count = len(partition_keys) - self.max_entries_per_partition
+                to_evict = partition_keys[:excess_count]
+                for key_str in to_evict:
+                    await self.redis.hdel(self._cache_key_embeddings, key_str)
+                    await self.redis.hdel(self._cache_key_responses, key_str)
+                    await self.redis.zrem(self._cache_key_timestamps, key_str)
+                logger.debug(
+                    "Evicted %d entries exceeding partition limit (%d) for scope %s",
+                    len(to_evict),
+                    self.max_entries_per_partition,
+                    filter_scope,
+                )
+        except Exception as exc:
+            logger.warning("Cache partition eviction failed: %s", exc)
+
+    async def _evict_oldest(self) -> None:
+        """Evict oldest entries to maintain max cache size."""
+        try:
+            total = await self.redis.zcard(self._cache_key_timestamps)
+            if total > self.max_cache_entries:
+                excess = total - self.max_cache_entries
+                oldest = await self.redis.zrange(self._cache_key_timestamps, 0, excess - 1)
+                for k in oldest:
+                    key_str = k.decode() if isinstance(k, bytes) else k
+                    await self.redis.hdel(self._cache_key_embeddings, key_str)
+                    await self.redis.hdel(self._cache_key_responses, key_str)
+                    await self.redis.zrem(self._cache_key_timestamps, key_str)
+                logger.debug("Evicted %d oldest cache entries", len(oldest))
+        except Exception as exc:
+            logger.warning("Cache LRU eviction failed: %s", exc)

@@ -23,34 +23,28 @@ graph TB
     end
 
     subgraph "API Layer"
-        API["FastAPI Backend<br/>REST + WebSocket + Auth"]
-        CACHE["Semantic Cache<br/>Redis + Vector Similarity"]
+        API["FastAPI Backend<br/>REST + SSE Streaming + Auth"]
+        CACHE["Semantic Cache<br/>Redis + Vector Similarity + Filter Scope"]
     end
 
     subgraph "Agentic RAG Pipeline — LangGraph"
-        ROUTER["Query Router Node"]
+        ROUTER{"Query Router Node<br/>Intent & Schema Classification"}
+        SQL_NODE["Safe Text-to-SQL Node<br/>DuckDB Parquet Lakehouse"]
         QR["Query Rewriter / Decomposer"]
         HYDE["HyDE Generator"]
-        RET["Hybrid Retriever<br/>Vector + BM25"]
+        RET["Hybrid Retriever<br/>Vector + BM25 + Multi-Query RRF"]
         RERANK["Cross-Encoder Reranker"]
         COMPRESS["Contextual Compressor"]
-        GRADE["Relevance Grader"]
+        GRADE{"Relevance Grader"}
         GEN["Response Generator"]
-        GUARD["Guardrails Node<br/>Toxicity | PII | Relevance"]
+        GUARD["Guardrails Node<br/>Toxicity | PII Scrubbing | Grounding Gate"]
     end
 
     subgraph "Data & Storage Layer"
-        PG["PostgreSQL + pgvector<br/>HNSW Index + BM25"]
-        PINE["Pinecone Serverless<br/>Hybrid + Metadata"]
-        META["Metadata Store<br/>PostgreSQL Tables"]
-        REDIS["Redis<br/>Cache + Sessions"]
-    end
-
-    subgraph "Data Ingestion Pipeline"
-        ICE["Iceberg Lakehouse<br/>Bronze / Silver / Gold"]
-        DUCK["DuckDB / Trino<br/>SQL Query Engine"]
-        CHUNK["Chunking Engine<br/>Parent + Child Strategy"]
-        EMB["Embedding Service<br/>text-embedding-3-large"]
+        PG["PostgreSQL + pgvector<br/>HNSW Index + BM25 tsvector"]
+        PARQUET["Parquet Lakehouse Store<br/>Orders, Products, Customers"]
+        DUCK["DuckDB In-Memory OLAP<br/>Analytical SQL Engine"]
+        REDIS["Redis<br/>Semantic Cache + LRU Eviction"]
     end
 
     subgraph "Observability"
@@ -62,27 +56,49 @@ graph TB
     UI --> API
     API --> CACHE
     CACHE -->|miss| ROUTER
-    ROUTER --> QR
+    ROUTER -->|sql| SQL_NODE
+    ROUTER -->|vector| QR
+    ROUTER -->|hybrid| SQL_NODE
+    SQL_NODE -->|sql route: generate/think| GEN
+    SQL_NODE -->|hybrid route: continue to vector| QR
     QR --> HYDE
     HYDE --> RET
     RET --> RERANK
     RERANK --> COMPRESS
     COMPRESS --> GRADE
     GRADE -->|relevant| GEN
-    GRADE -->|irrelevant| QR
+    GRADE -->|retry if irrelevant| QR
     GEN --> GUARD
     GUARD --> API
+    SQL_NODE --> DUCK
+    DUCK --> PARQUET
     RET --> PG
-    RET --> PINE
-    ICE --> DUCK
-    DUCK --> CHUNK
-    CHUNK --> EMB
-    EMB --> PG
-    EMB --> PINE
+    CACHE --> REDIS
     API --> SMITH
     API --> PROM
     API --> LOG
 ```
+
+---
+
+## 📋 Feature Status Matrix
+
+To provide complete transparency between architectural design and current code capabilities, each component is categorized below:
+
+| Feature / Subsystem | Status | Details & Implementation Scope |
+| :--- | :---: | :--- |
+| **Safe Text-to-SQL Node** | ✅ **Implemented & Tested** | Schema-aware DuckDB executor querying Parquet/JSON lakehouse tables with AST/token allowlisting, strict read-only boundaries, and row limits. |
+| **LangGraph Dynamic Branching** | ✅ **Implemented & Tested** | Conditional router branching: `sql` (direct to SQL), `vector` (semantic retrieval), and `hybrid` (combines structured SQL table with qualitative documents). |
+| **Reciprocal Rank Fusion (RRF)** | ✅ **Implemented & Tested** | True RRF: $\operatorname{RRF}(d) = \sum_{r \in R} \frac{1}{k + \operatorname{rank}_r(d)}$ across independent query/HyDE lists with per-list deduplication and stable IDs. |
+| **Parent-Child Chunking Isolation**| ✅ **Implemented & Tested** | Parents stored exclusively in `parent_documents` (unembedded); child chunks (256 tokens) stored in searchable `documents` table. |
+| **Token-Aware Embedding Truncation**| ✅ **Implemented & Tested** | `tiktoken` encoding truncation (`<= 8000 tokens`) in `EmbeddingService` preventing provider token limit errors. |
+| **Atomic Rate Limiter** | ✅ **Implemented & Tested** | Redis Lua script executes atomic token deductions without race conditions; configurable fail-open/fail-closed modes. |
+| **Startup & Readiness Probes** | ✅ **Implemented & Tested** | `/api/v1/health` and `/api/v1/ready` probes with critical service fail-fast checks (`RuntimeError` in production). |
+| **Lakehouse Catalog** | ⚙️ **Simulated Locally** | Tables (`products`, `orders`, `customers`) simulated via DuckDB querying local Parquet datasets. Distributed Apache Iceberg catalog on S3/MinIO is a planned deployment target. |
+| **Semantic Cache** | 🔌 **Optional / Config-Dependent** | Redis-backed cosine similarity cache; gracefully bypassed if Redis is unavailable in development mode. |
+| **Cross-Encoder Reranker** | 🔌 **Optional / Config-Dependent** | Cohere Rerank API with automatic fallback to retriever RRF scores if Cohere key is omitted. |
+| **Alternative Vector Stores** | 🔌 **Optional / Config-Dependent** | PostgreSQL + pgvector is the default primary provider; Pinecone Serverless client implemented for cloud deployments. |
+| **Distributed Query (Trino/Spark)** | 🔮 **Planned Roadmap** | Distributed catalog access across remote S3/MinIO buckets. |
 
 ---
 
@@ -140,10 +156,10 @@ ecom-rag-lakehouse-analyst/
 │   │   ├── schemas.py              # Pydantic validation schemas
 │   │   └── exceptions.py           # Structured error responses
 │   ├── rag/
-│   │   ├── graph.py                # LangGraph StateGraph composition
+│   │   ├── graph.py                # LangGraph StateGraph composition & dynamic routing
 │   │   ├── state.py                # Pipeline state model
-│   │   ├── nodes/                  # Individual agentic nodes (grader, router, etc.)
-│   │   └── cache/                  # Redis semantic cache
+│   │   ├── nodes/                  # sql_node, retriever, grader, router, guardrails
+│   │   └── cache/                  # Redis semantic cache with filter scoping & LRU
 │   ├── vectorstore/
 │   │   ├── base.py                 # Abstract vector store interface
 │   │   ├── pgvector_store.py       # pgvector + hybrid search implementation

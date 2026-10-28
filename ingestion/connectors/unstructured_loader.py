@@ -80,7 +80,7 @@ class UnstructuredLoader:
         self, path: Path, document_type: str | None
     ) -> list[dict[str, Any]]:
         """Load a JSON file (array of objects)."""
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
         if isinstance(data, list):
@@ -94,7 +94,7 @@ class UnstructuredLoader:
     ) -> list[dict[str, Any]]:
         """Load a JSONL file (one JSON object per line)."""
         documents: list[dict[str, Any]] = []
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -110,7 +110,7 @@ class UnstructuredLoader:
     ) -> list[dict[str, Any]]:
         """Load a CSV file, treating each row as a document."""
         documents: list[dict[str, Any]] = []
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 content_parts = [f"{k}: {v}" for k, v in row.items() if v]

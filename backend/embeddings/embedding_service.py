@@ -113,8 +113,8 @@ class EmbeddingService:
         """Embed a single batch with retry."""
         client = self._get_client()
 
-        # Truncate very long texts to avoid token limits
-        truncated = [t[:8000] for t in texts]
+        # Token-aware truncation to avoid token limit errors (e.g. 8191 tokens for text-embedding-3-large)
+        truncated = [self._truncate_to_tokens(t, max_tokens=8000) for t in texts]
 
         response = await client.embeddings.create(
             model=self.model,
@@ -130,6 +130,26 @@ class EmbeddingService:
 
         # Normalize all
         return [self._normalize(emb) for emb in embeddings]
+
+    def _truncate_to_tokens(self, text: str, max_tokens: int = 8000) -> str:
+        """Truncate text to a maximum token count using model encoding."""
+        if not text:
+            return ""
+        try:
+            import tiktoken
+
+            try:
+                enc = tiktoken.encoding_for_model(self.model)
+            except KeyError:
+                enc = tiktoken.get_encoding("cl100k_base")
+
+            tokens = enc.encode(text)
+            if len(tokens) <= max_tokens:
+                return text
+            return enc.decode(tokens[:max_tokens])
+        except Exception as exc:
+            logger.warning("tiktoken truncation failed, fallback to char slicing: %s", exc)
+            return text[: max_tokens * 4]
 
     @staticmethod
     def _normalize(embedding: list[float]) -> list[float]:

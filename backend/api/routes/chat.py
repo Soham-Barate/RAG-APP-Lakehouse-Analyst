@@ -8,12 +8,11 @@ the LangGraph RAG pipeline.
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 
 import structlog
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from backend.api.middleware.auth import verify_api_key
@@ -24,7 +23,6 @@ from backend.core.schemas import (
     PipelineMetrics,
     StreamChunk,
 )
-from config.settings import get_settings
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -46,7 +44,6 @@ async def chat(
     3. Cache the result
     4. Return complete response with sources and metrics
     """
-    settings = get_settings()
     start = time.perf_counter()
     message_id = str(uuid.uuid4())
 
@@ -60,7 +57,8 @@ async def chat(
     # ----- 1. Check semantic cache -----
     cache = getattr(request.app.state, "semantic_cache", None)
     if cache:
-        cached = await cache.get(body.query)
+        filters_dict = body.filters.model_dump(exclude_none=True)
+        cached = await cache.get(body.query, filters=filters_dict)
         if cached:
             latency_ms = (time.perf_counter() - start) * 1000
             await logger.ainfo("cache_hit", conversation_id=body.conversation_id)
@@ -75,22 +73,10 @@ async def chat(
     # ----- 2. Invoke RAG pipeline -----
     rag_graph = getattr(request.app.state, "rag_graph", None)
     if rag_graph is None:
-        # Graceful fallback when pipeline isn't initialized
-        latency_ms = (time.perf_counter() - start) * 1000
-        return ChatResponse(
-            message_id=message_id,
-            conversation_id=body.conversation_id,
-            answer=(
-                "The RAG pipeline is not yet initialized. "
-                "Please run data ingestion first or check service health."
-            ),
-            confidence_score=0.0,
-            sources=[],
-            metrics=PipelineMetrics(
-                total_latency_ms=round(latency_ms, 2),
-                cache_hit=False,
-            ),
-            disclaimer="System not fully initialized.",
+        await logger.awarning("rag_pipeline_uninitialized", conversation_id=body.conversation_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The RAG pipeline is not yet initialized. Please run data ingestion first or check service health.",
         )
 
     # Build pipeline input state
@@ -112,14 +98,9 @@ async def chat(
             conversation_id=body.conversation_id,
             error=str(exc),
         )
-        return ChatResponse(
-            message_id=message_id,
-            conversation_id=body.conversation_id,
-            answer="I encountered an error processing your request. Please try again.",
-            confidence_score=0.0,
-            sources=[],
-            metrics=PipelineMetrics(total_latency_ms=round(latency_ms, 2)),
-            disclaimer="An error occurred during processing.",
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while executing the RAG pipeline. Please retry.",
         )
 
     latency_ms = (time.perf_counter() - start) * 1000
@@ -131,6 +112,9 @@ async def chat(
         answer=result.get("answer", "No answer generated."),
         confidence_score=result.get("confidence_score", 0.0),
         sources=result.get("sources", []),
+        sql_query=result.get("sql_query"),
+        sql_results=result.get("sql_results"),
+        route=result.get("route"),
         metrics=PipelineMetrics(
             total_latency_ms=round(latency_ms, 2),
             retrieval_latency_ms=result.get("retrieval_latency_ms", 0.0),
@@ -147,6 +131,7 @@ async def chat(
 
     # ----- 3. Cache the result -----
     if cache and response.confidence_score > 0.3:
+        filters_dict = body.filters.model_dump(exclude_none=True)
         await cache.set(
             body.query,
             {
@@ -155,6 +140,7 @@ async def chat(
                 "sources": [s.model_dump() for s in response.sources],
                 "metrics": response.metrics.model_dump(),
             },
+            filters=filters_dict,
         )
 
     await logger.ainfo(

@@ -4,8 +4,6 @@ Ingestion pipeline tests.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from ingestion.chunking.parent_child import ParentChildChunker
@@ -130,3 +128,66 @@ class TestSyntheticDataGenerator:
             assert "title" in t
             assert "body" in t
             assert "priority" in t
+
+
+class TestParentChildIngestionRegression:
+    """Regression tests verifying parent chunks are excluded from the searchable documents table."""
+
+    @pytest.mark.asyncio
+    async def test_parent_chunks_only_in_parent_documents_table(self):
+        """Assert that is_parent chunks never enter the documents vector table."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from backend.vectorstore.pgvector_store import PgVectorStore
+
+        mock_engine = MagicMock()
+        mock_conn = AsyncMock()
+        executed_sqls = []
+
+        async def capture_execute(statement, params=None):
+            executed_sqls.append((str(statement), params))
+            mock_res = MagicMock()
+            mock_res.rowcount = 1
+            return mock_res
+
+        mock_conn.execute = capture_execute
+        mock_engine.begin.return_value.__aenter__.return_value = mock_conn
+
+        store = PgVectorStore(
+            engine=mock_engine,
+            embedding_service=MagicMock(),
+            settings=MagicMock(openai=MagicMock(embedding_dimensions=3072)),
+        )
+
+        test_docs = [
+            {"id": "parent_1", "content": "Large parent content", "is_parent": True},
+            {"id": "child_1", "content": "Child chunk 1", "is_parent": False, "parent_id": "parent_1"},
+        ]
+        test_embeddings = [
+            [0.1] * 3072,  # embedding for child_1
+        ]
+        test_meta = [
+            {"parent_id": "parent_1"},
+            {"parent_id": "parent_1", "document_type": "product"},
+        ]
+
+        await store.add_documents(test_docs, embeddings=test_embeddings, metadata=test_meta)
+
+        # Check executed SQLs
+        parent_inserts = [
+            (sql, p) for sql, p in executed_sqls if "INSERT INTO parent_documents" in sql
+        ]
+        document_inserts = [
+            (sql, p) for sql, p in executed_sqls if "INSERT INTO documents" in sql
+        ]
+
+        assert len(parent_inserts) == 1
+        assert parent_inserts[0][1]["id"] == "parent_1"
+
+        assert len(document_inserts) == 1
+        assert document_inserts[0][1]["id"] == "child_1"
+        assert document_inserts[0][1]["parent_id"] == "parent_1"
+
+        # Explicitly verify parent_1 was NEVER inserted into documents table
+        for _sql, p in document_inserts:
+            assert p["id"] != "parent_1"

@@ -230,3 +230,95 @@ GOLDEN_QUERIES: list[dict[str, object]] = [
 
 # Subset for quick testing
 QUICK_TEST_QUERIES = [q for q in GOLDEN_QUERIES if q["difficulty"] in ("easy", "medium")][:10]
+
+# ----- Structured Lakehouse / SQL Analytical Queries -----
+STRUCTURED_ANALYTICAL_QUERIES: list[dict[str, object]] = [
+    {
+        "query": "What are the top 5 products by revenue this quarter?",
+        "expected_route": "sql",
+        "expected_tables": ["orders", "products"],
+        "expected_columns": ["name", "revenue", "total_amount"],
+        "min_rows": 1,
+        "difficulty": "medium",
+    },
+    {
+        "query": "Show me total revenue by product category",
+        "expected_route": "sql",
+        "expected_tables": ["orders", "products"],
+        "expected_columns": ["category", "total_revenue"],
+        "min_rows": 1,
+        "difficulty": "medium",
+    },
+    {
+        "query": "What is the average order value across all orders?",
+        "expected_route": "sql",
+        "expected_tables": ["orders"],
+        "expected_columns": ["avg_order_value", "total_amount"],
+        "min_rows": 1,
+        "difficulty": "easy",
+    },
+    {
+        "query": "How many orders were placed by customer tier (Gold, Silver, Platinum)?",
+        "expected_route": "sql",
+        "expected_tables": ["customers", "orders"],
+        "expected_columns": ["tier", "order_count"],
+        "min_rows": 1,
+        "difficulty": "medium",
+    },
+    {
+        "query": "List all products with stock quantity below threshold or out of stock",
+        "expected_route": "sql",
+        "expected_tables": ["products"],
+        "expected_columns": ["product_id", "name", "in_stock"],
+        "min_rows": 0,
+        "difficulty": "easy",
+    },
+    {
+        "query": "What are the top 3 most returned products?",
+        "expected_route": "sql",
+        "expected_tables": ["orders"],
+        "expected_columns": ["product_name", "return_count"],
+        "min_rows": 1,
+        "difficulty": "medium",
+    },
+    {
+        "query": "Count of orders broken down by order status",
+        "expected_route": "sql",
+        "expected_tables": ["orders"],
+        "expected_columns": ["status", "count"],
+        "min_rows": 1,
+        "difficulty": "easy",
+    },
+    {
+        "query": "What is the total spending by customer segment?",
+        "expected_route": "sql",
+        "expected_tables": ["customers"],
+        "expected_columns": ["tier", "total_spent"],
+        "min_rows": 1,
+        "difficulty": "easy",
+    },
+    {
+        "query": "Find the payment method distribution for orders over $100",
+        "expected_route": "sql",
+        "expected_tables": ["orders"],
+        "expected_columns": ["payment_method", "count"],
+        "min_rows": 1,
+        "difficulty": "medium",
+    },
+    {
+        "query": "Which department generated the highest sales volume?",
+        "expected_route": "sql",
+        "expected_tables": ["products", "orders"],
+        "expected_columns": ["department", "sales_volume"],
+        "min_rows": 1,
+        "difficulty": "medium",
+    },
+    {
+        "query": "Show average customer lifetime value and order count by preferred category",
+        "expected_route": "sql",
+        "expected_tables": ["customers"],
+        "expected_columns": ["preferred_category", "avg_spent"],
+        "min_rows": 1,
+        "difficulty": "hard",
+    },
+]

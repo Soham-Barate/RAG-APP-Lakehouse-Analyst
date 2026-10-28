@@ -70,6 +70,7 @@ class IngestionPipeline:
             "chunks_created": 0,
             "embeddings_generated": 0,
             "documents_upserted": 0,
+            "parents_upserted": 0,
             "errors": [],
             "duration_seconds": 0.0,
         }
@@ -117,54 +118,54 @@ class IngestionPipeline:
             return stats
 
         # ----- Step 3 & 4: Embed and upsert in batches -----
-        for i in range(0, len(all_chunks), batch_size):
-            batch = all_chunks[i : i + batch_size]
+        # Separate parent chunks and child chunks so that parents are ALWAYS
+        # committed before child chunks reference them.
+        parent_chunks = [c for c in all_chunks if c.get("is_parent")]
+        child_chunks = [c for c in all_chunks if not c.get("is_parent")]
 
+        # Step 3: Insert all parent documents first to guarantee foreign key integrity (skip embedding generation)
+        if parent_chunks:
             try:
-                # Extract content for embedding (only child chunks)
-                texts_to_embed = [
-                    c["content"] for c in batch if not c.get("is_parent")
-                ]
-                child_chunks = [c for c in batch if not c.get("is_parent")]
-                parent_chunks = [c for c in batch if c.get("is_parent")]
-
-                # Generate embeddings for child chunks
-                if texts_to_embed:
-                    embeddings = await self.embedding_service.embed_documents(
-                        texts_to_embed
-                    )
-                    stats["embeddings_generated"] += len(embeddings)
-
-                    # Upsert child chunks with embeddings
-                    metadata_list = [c.get("metadata", {}) for c in child_chunks]
+                for i in range(0, len(parent_chunks), batch_size):
+                    batch_parents = parent_chunks[i : i + batch_size]
+                    parent_meta = [c.get("metadata", {}) for c in batch_parents]
                     await self.vector_store.add_documents(
-                        documents=child_chunks,
-                        embeddings=embeddings,
-                        metadata=metadata_list,
-                    )
-                    stats["documents_upserted"] += len(child_chunks)
-
-                # Upsert parent chunks (no embedding needed, stored for retrieval)
-                if parent_chunks:
-                    # Parents get a zero-vector (they're never searched, only fetched)
-                    zero_embeddings = [
-                        [0.0] * self.embedding_service.dimensions
-                        for _ in parent_chunks
-                    ]
-                    parent_meta = [c.get("metadata", {}) for c in parent_chunks]
-                    await self.vector_store.add_documents(
-                        documents=parent_chunks,
-                        embeddings=zero_embeddings,
+                        documents=batch_parents,
+                        embeddings=None,
                         metadata=parent_meta,
                     )
+                stats["parents_upserted"] = len(parent_chunks)
+                logger.info("Successfully upserted %d parent documents", len(parent_chunks))
+            except Exception as exc:
+                error = f"Parent documents upsert failed: {exc}"
+                stats["errors"].append(error)
+                logger.error(error)
+
+        # Step 4: Embed and upsert child chunks
+        for i in range(0, len(child_chunks), batch_size):
+            batch = child_chunks[i : i + batch_size]
+
+            try:
+                texts_to_embed = [c["content"] for c in batch]
+                embeddings = await self.embedding_service.embed_documents(
+                    texts_to_embed
+                )
+                stats["embeddings_generated"] += len(embeddings)
+
+                metadata_list = [c.get("metadata", {}) for c in batch]
+                await self.vector_store.add_documents(
+                    documents=batch,
+                    embeddings=embeddings,
+                    metadata=metadata_list,
+                )
+                stats["documents_upserted"] += len(batch)
 
                 logger.info(
-                    "Batch %d-%d: %d chunks embedded and upserted",
+                    "Batch %d-%d: %d child chunks embedded and upserted",
                     i, i + len(batch), len(batch),
                 )
-
             except Exception as exc:
-                error = f"Batch {i} failed: {exc}"
+                error = f"Child batch {i} failed: {exc}"
                 stats["errors"].append(error)
                 logger.error(error)
 

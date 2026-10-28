@@ -72,6 +72,11 @@ class CrossEncoderReranker:
 
         latency_ms = (time.perf_counter() - start) * 1000
 
+        # If a structured lakehouse document exists from the SQL node, ensure it is preserved
+        sql_doc = state.get("sql_doc")
+        if sql_doc:
+            reranked = [sql_doc] + [d for d in reranked if d.get("id") != sql_doc.get("id")]
+
         logger.info(
             "Reranking: %d -> %d documents (%.1fms)",
             len(docs),

@@ -36,6 +36,13 @@ class RAGState(TypedDict, total=False):
     rewritten_queries: list[str]          # Expanded / decomposed queries
     hyde_document: str                    # Hypothetical answer document
 
+    # ----- Structured Lakehouse / SQL -----
+    sql_query: str                        # Generated DuckDB/Iceberg SQL query
+    sql_results: list[dict[str, Any]]     # Raw SQL execution rows
+    sql_error: str | None                 # Error details if SQL validation or execution failed
+    sql_context: str | None               # Formatted markdown table context of SQL results
+    sql_doc: dict[str, Any] | None        # Synthetic document for sources attribution
+
     # ----- Retrieval -----
     retrieved_docs: list[dict[str, Any]]  # Raw retrieved document dicts
     reranked_docs: list[dict[str, Any]]   # After cross-encoder reranking
@@ -55,6 +62,10 @@ class RAGState(TypedDict, total=False):
     # ----- Guardrails -----
     guardrail_flags: dict[str, Any]       # Safety check results
     pii_redacted_query: str               # Input after PII redaction
+
+    # ----- Chain-of-thought reasoning -----
+    reasoning_trace: str                  # Internal CoT reasoning (not shown to user)
+    fast_mode: bool                       # Skip CoT + verification for speed
 
     # ----- Metrics (accumulated across nodes) -----
     retrieval_latency_ms: float

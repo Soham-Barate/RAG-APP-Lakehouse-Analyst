@@ -137,6 +137,16 @@ class SyntheticDataGenerator:
         self._write_json(self.output_dir / "bronze" / "reviews.json", reviews)
         self._write_json(self.output_dir / "bronze" / "tickets.json", tickets)
 
+        # Write as Parquet files for DuckDB / Lakehouse analytical queries
+        try:
+            import pandas as pd
+            pd.DataFrame(products).to_parquet(self.output_dir / "gold" / "products.parquet", index=False)
+            pd.DataFrame(orders).to_parquet(self.output_dir / "silver" / "orders.parquet", index=False)
+            pd.DataFrame(customers).to_parquet(self.output_dir / "silver" / "customers.parquet", index=False)
+            logger.info("Saved parquet datasets to gold/silver layers")
+        except Exception as exc:
+            logger.warning("Could not write parquet datasets: %s", exc)
+
         logger.info(
             "Generated: %d products, %d customers, %d orders, "
             "%d reviews, %d tickets",

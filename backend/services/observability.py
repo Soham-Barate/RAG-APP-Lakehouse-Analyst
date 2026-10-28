@@ -5,10 +5,8 @@ Observability: LangSmith tracing + Prometheus metrics + structured logging.
 from __future__ import annotations
 
 import logging
-import time
-from typing import Any
 
-from prometheus_client import Counter, Histogram, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 from config.settings import Settings
 

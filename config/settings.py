@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from enum import Enum
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -133,6 +132,10 @@ class RateLimitSettings(BaseSettings):
 
     requests_per_minute: int = Field(default=60)
     tokens_per_minute: int = Field(default=100_000)
+    fail_closed: bool = Field(
+        default=False,
+        description="Whether to block traffic when Redis is unavailable (recommended true in production)",
+    )
 
 
 class RAGSettings(BaseSettings):
@@ -215,6 +218,16 @@ class Settings(BaseSettings):
     )
     jwt_algorithm: str = Field(default="HS256")
     jwt_expiration_minutes: int = Field(default=60)
+    allowed_file_types: list[str] = Field(
+        default_factory=lambda: [
+            ".pdf", ".docx", ".xlsx", ".csv", ".txt",
+            ".json", ".jsonl", ".md", ".markdown", ".parquet"
+        ]
+    )
+    max_file_size_mb: int = Field(default=50)
+    api_key_roles: dict[str, str] = Field(
+        default_factory=lambda: {"dev-key-1": "admin"}
+    )
 
     # Vector store selection
     vector_store_provider: VectorStoreProvider = Field(
@@ -253,7 +266,7 @@ class Settings(BaseSettings):
         return v  # type: ignore[return-value]
 
     @model_validator(mode="after")
-    def validate_production_secrets(self) -> "Settings":
+    def validate_production_secrets(self) -> Settings:
         """Warn if running production without real secrets."""
         if self.app_env == Environment.PRODUCTION:
             if self.jwt_secret_key.get_secret_value() == "change-this-to-a-random-secret":

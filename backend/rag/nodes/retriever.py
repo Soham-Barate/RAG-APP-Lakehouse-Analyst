@@ -47,7 +47,8 @@ class HybridRetriever:
         hyde_doc = state.get("hyde_document", "")
         filters = state.get("metadata_filters", {})
 
-        all_results: list[dict[str, Any]] = []
+        ranked_lists: list[list[dict[str, Any]]] = []
+        raw_count = 0
 
         # ----- 1. Retrieve for each query variant -----
         for query_text in queries:
@@ -57,7 +58,9 @@ class HybridRetriever:
                     filters=filters,
                     top_k=self.top_k,
                 )
-                all_results.extend(results)
+                if results:
+                    ranked_lists.append(results)
+                    raw_count += len(results)
             except Exception as exc:
                 logger.warning("Retrieval failed for query variant: %s", exc)
 
@@ -69,12 +72,14 @@ class HybridRetriever:
                     filters=filters,
                     top_k=self.top_k // 2,  # Fewer results for HyDE
                 )
-                all_results.extend(hyde_results)
+                if hyde_results:
+                    ranked_lists.append(hyde_results)
+                    raw_count += len(hyde_results)
             except Exception as exc:
                 logger.warning("HyDE retrieval failed: %s", exc)
 
-        # ----- 3. Reciprocal Rank Fusion (RRF) -----
-        fused = self._reciprocal_rank_fusion(all_results)
+        # ----- 3. Reciprocal Rank Fusion (RRF) across independent ranked lists -----
+        fused = self._reciprocal_rank_fusion(ranked_lists)
 
         # ----- 4. Deduplicate -----
         seen_ids: set[str] = set()
@@ -95,7 +100,7 @@ class HybridRetriever:
 
         logger.info(
             "Retrieval: %d raw -> %d fused -> %d unique (%.1fms)",
-            len(all_results),
+            raw_count,
             len(fused),
             len(resolved),
             latency_ms,
@@ -109,31 +114,63 @@ class HybridRetriever:
 
     def _reciprocal_rank_fusion(
         self,
-        results: list[dict[str, Any]],
+        results: list[list[dict[str, Any]]] | list[dict[str, Any]],
         k: int = 60,
     ) -> list[dict[str, Any]]:
         """
-        Reciprocal Rank Fusion — merges multiple ranked lists.
+        Reciprocal Rank Fusion — merges multiple independently ranked lists.
 
-        RRF score = Σ 1/(k + rank_i) for each list the document appears in.
+        Formula:
+            RRF(d) = Σ_{r in R} 1 / (k + rank_r(d))
+        where rank_r(d) is the 1-based rank of document d in ranked list r.
+
+        Guarantees:
+        - Each independent list contributes at most once per unique document.
+        - Stable document IDs are used for deduplication.
+        - Document metadata, scores, and contents are safely preserved.
         """
+        if not results:
+            return []
+
         doc_scores: dict[str, float] = {}
         doc_map: dict[str, dict[str, Any]] = {}
 
-        # Group results by query (approximate: assume sequential order)
-        # Each query contributes its own ranking
-        for rank, doc in enumerate(results):
-            doc_id = doc.get("id", doc.get("content", "")[:100])
-            rrf_score = 1.0 / (k + rank + 1)
+        # Accept either list of ranked lists or a single flat list (for backward compatibility)
+        if isinstance(results[0], dict):
+            ranked_lists: list[list[dict[str, Any]]] = [results]  # type: ignore[list-item]
+        else:
+            ranked_lists = results  # type: ignore[assignment]
 
-            if doc_id in doc_scores:
-                doc_scores[doc_id] += rrf_score
-            else:
-                doc_scores[doc_id] = rrf_score
-                doc_map[doc_id] = doc
+        for r_list in ranked_lists:
+            if not isinstance(r_list, list):
+                continue
+            seen_in_current_list: set[str] = set()
+            for rank, doc in enumerate(r_list, start=1):
+                if not isinstance(doc, dict):
+                    continue
+                doc_id = str(doc.get("id") or doc.get("content", "")[:100]).strip()
+                if not doc_id:
+                    continue
 
-        # Sort by RRF score descending
-        sorted_ids = sorted(doc_scores.keys(), key=lambda x: doc_scores[x], reverse=True)
+                # Ensure document only contributes once per independent list (at its best rank)
+                if doc_id in seen_in_current_list:
+                    continue
+                seen_in_current_list.add(doc_id)
+
+                rrf_score = 1.0 / (k + rank)
+
+                if doc_id in doc_scores:
+                    doc_scores[doc_id] += rrf_score
+                else:
+                    doc_scores[doc_id] = rrf_score
+                    doc_map[doc_id] = doc.copy()
+
+        # Sort by RRF score descending, with deterministic tie-breaking by doc_id
+        sorted_ids = sorted(
+            doc_scores.keys(),
+            key=lambda x: (doc_scores[x], x),
+            reverse=True,
+        )
 
         fused = []
         for doc_id in sorted_ids:

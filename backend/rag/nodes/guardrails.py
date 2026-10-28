@@ -7,13 +7,11 @@ Checks for PII leakage, toxicity, relevance, and hallucination.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Any
 
 from backend.core.constants import PII_ENTITY_TYPES, TOXIC_KEYWORDS
-from backend.rag.prompts.templates import GUARDRAILS_PROMPT, INPUT_SAFETY_PROMPT
 from backend.rag.state import RAGState
 
 logger = logging.getLogger(__name__)
@@ -161,16 +159,7 @@ class GuardrailsNode:
         return bool(found), found
 
     def _check_input_safety(self, query: str) -> bool:
-        """Quick check for common prompt injection patterns."""
-        injection_patterns = [
-            "ignore previous instructions",
-            "ignore above instructions",
-            "system prompt",
-            "reveal your instructions",
-            "forget everything",
-            "you are now",
-            "act as if",
-            "pretend you are",
-        ]
-        query_lower = query.lower()
-        return not any(pattern in query_lower for pattern in injection_patterns)
+        """Check for prompt injection patterns using the centralized input validator."""
+        from backend.core.input_validator import detect_prompt_injection
+        is_injection, _ = detect_prompt_injection(query)
+        return not is_injection

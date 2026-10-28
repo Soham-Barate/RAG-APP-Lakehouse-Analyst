@@ -12,7 +12,6 @@ import logging
 import uuid
 from typing import Any
 
-import numpy as np
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -32,7 +31,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS parent_documents (
     id          TEXT PRIMARY KEY,
     content     TEXT NOT NULL,
-    metadata    JSONB DEFAULT '{}',
+    metadata    JSONB DEFAULT '{{}}',
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -43,7 +42,7 @@ CREATE TABLE IF NOT EXISTS documents (
     content         TEXT NOT NULL,
     embedding       vector({dimensions}),
     content_tsv     tsvector,
-    metadata        JSONB DEFAULT '{}',
+    metadata        JSONB DEFAULT '{{}}',
     document_type   TEXT DEFAULT 'product',
     category        TEXT,
     created_at      TIMESTAMPTZ DEFAULT NOW()
@@ -180,7 +179,7 @@ class PgVectorStore(VectorStoreBase):
     async def add_documents(
         self,
         documents: list[dict[str, Any]],
-        embeddings: list[list[float]],
+        embeddings: list[list[float]] | None = None,
         metadata: list[dict[str, Any]] | None = None,
     ) -> list[str]:
         """Add documents with embeddings to PostgreSQL."""
@@ -191,51 +190,68 @@ class PgVectorStore(VectorStoreBase):
         doc_ids: list[str] = []
 
         async with self.engine.begin() as conn:
-            for i, (doc, emb, meta) in enumerate(zip(documents, embeddings, metadata)):
-                doc_id = doc.get("id", str(uuid.uuid4()))
-                parent_id = meta.get("parent_id")
-                content = doc.get("content", "")
-                doc_type = meta.get("document_type", "product")
-                category = meta.get("category", "")
+            # First pass: Upsert all parent documents if present
+            for doc, meta in zip(documents, metadata):
+                if doc.get("is_parent"):
+                    p_id = doc.get("id") or meta.get("parent_id")
+                    if p_id:
+                        content = doc.get("content", "")
+                        await conn.execute(
+                            text(
+                                "INSERT INTO parent_documents (id, content, metadata) "
+                                "VALUES (:id, :content, :metadata) "
+                                "ON CONFLICT (id) DO UPDATE SET content = :content, metadata = :metadata"
+                            ),
+                            {
+                                "id": p_id,
+                                "content": content,
+                                "metadata": json.dumps(meta),
+                            },
+                        )
+                        doc_ids.append(p_id)
 
-                # Insert parent document if it exists
-                if parent_id and doc.get("is_parent"):
+            # Second pass: Upsert child or regular documents into vector table (never parent chunks)
+            if embeddings:
+                non_parent_pairs = [(d, m) for d, m in zip(documents, metadata) if not d.get("is_parent")]
+                if len(embeddings) == len(non_parent_pairs):
+                    child_iterable = zip([d for d, _ in non_parent_pairs], embeddings, [m for _, m in non_parent_pairs])
+                else:
+                    child_iterable = zip(documents, embeddings, metadata)
+
+                for doc, emb, meta in child_iterable:
+                    if doc.get("is_parent"):
+                        # Parent documents live strictly in parent_documents; never pollute documents
+                        continue
+
+                    doc_id = doc.get("id", str(uuid.uuid4()))
+                    parent_id = meta.get("parent_id") or doc.get("parent_id")
+                    content = doc.get("content", "")
+                    doc_type = meta.get("document_type", "product")
+                    category = meta.get("category", "")
+
+                    # Insert child/regular document
+                    embedding_str = f"[{','.join(str(x) for x in emb)}]"
                     await conn.execute(
                         text(
-                            "INSERT INTO parent_documents (id, content, metadata) "
-                            "VALUES (:id, :content, :metadata) "
-                            "ON CONFLICT (id) DO UPDATE SET content = :content"
+                            "INSERT INTO documents "
+                            "(id, parent_id, content, embedding, metadata, document_type, category) "
+                            "VALUES (:id, :parent_id, :content, :embedding::vector, "
+                            ":metadata, :doc_type, :category) "
+                            "ON CONFLICT (id) DO UPDATE SET "
+                            "content = :content, embedding = :embedding::vector, "
+                            "metadata = :metadata"
                         ),
                         {
-                            "id": parent_id,
+                            "id": doc_id,
+                            "parent_id": parent_id,
                             "content": content,
+                            "embedding": embedding_str,
                             "metadata": json.dumps(meta),
+                            "doc_type": doc_type,
+                            "category": category,
                         },
                     )
-
-                # Insert child/regular document
-                embedding_str = f"[{','.join(str(x) for x in emb)}]"
-                await conn.execute(
-                    text(
-                        "INSERT INTO documents "
-                        "(id, parent_id, content, embedding, metadata, document_type, category) "
-                        "VALUES (:id, :parent_id, :content, :embedding::vector, "
-                        ":metadata, :doc_type, :category) "
-                        "ON CONFLICT (id) DO UPDATE SET "
-                        "content = :content, embedding = :embedding::vector, "
-                        "metadata = :metadata"
-                    ),
-                    {
-                        "id": doc_id,
-                        "parent_id": parent_id,
-                        "content": content,
-                        "embedding": embedding_str,
-                        "metadata": json.dumps(meta),
-                        "doc_type": doc_type,
-                        "category": category,
-                    },
-                )
-                doc_ids.append(doc_id)
+                    doc_ids.append(doc_id)
 
         logger.info("Added %d documents to pgvector", len(doc_ids))
         return doc_ids
@@ -252,24 +268,25 @@ class PgVectorStore(VectorStoreBase):
         if query_embedding is None:
             query_embedding = await self.embedding_service.embed_query(query_text)
 
-        # Build filter clause
-        filter_clause = self._build_filter_clause(filters)
+        # Build filter clause with parameterized values
+        extra_params: dict[str, Any] = {}
+        filter_clause = self._build_filter_clause(filters, extra_params)
 
         # Format embedding for PostgreSQL
         embedding_str = f"[{','.join(str(x) for x in query_embedding)}]"
 
         sql = HYBRID_SEARCH_SQL.format(filter_clause=filter_clause)
 
+        query_params = {
+            "query_embedding": embedding_str,
+            "query_text": query_text,
+            "top_k": top_k,
+            "candidate_limit": top_k * 5,
+            **extra_params,
+        }
+
         async with self.engine.begin() as conn:
-            result = await conn.execute(
-                text(sql),
-                {
-                    "query_embedding": embedding_str,
-                    "query_text": query_text,
-                    "top_k": top_k,
-                    "candidate_limit": top_k * 5,
-                },
-            )
+            result = await conn.execute(text(sql), query_params)
             rows = result.fetchall()
 
         documents: list[dict[str, Any]] = []
@@ -325,30 +342,61 @@ class PgVectorStore(VectorStoreBase):
             row = result.fetchone()
             return row[0] if row else 0
 
-    def _build_filter_clause(self, filters: dict[str, Any] | None) -> str:
-        """Build SQL WHERE clause from metadata filters."""
+    def _build_filter_clause(
+        self,
+        filters: dict[str, Any] | None,
+        params: dict[str, Any],
+    ) -> str:
+        """
+        Build SQL WHERE clause from metadata filters using parameterized
+        queries to prevent SQL injection.
+
+        Args:
+            filters: User-provided filter dict.
+            params: Mutable dict that will be populated with bind-parameter
+                    values for use in ``text()`` queries.
+
+        Returns:
+            SQL fragment with ``:param`` placeholders (safe for ``text()``).
+        """
         if not filters:
             return ""
 
         clauses: list[str] = []
 
         if filters.get("categories"):
-            cats = ",".join(f"'{c}'" for c in filters["categories"])
-            clauses.append(f"AND category IN ({cats})")
+            placeholders = []
+            for idx, cat in enumerate(filters["categories"]):
+                key = f"flt_cat_{idx}"
+                params[key] = cat
+                placeholders.append(f":{key}")
+            clauses.append(f"AND category IN ({', '.join(placeholders)})")
 
         if filters.get("document_types"):
-            types = ",".join(f"'{t}'" for t in filters["document_types"])
-            clauses.append(f"AND document_type IN ({types})")
+            placeholders = []
+            for idx, dt in enumerate(filters["document_types"]):
+                key = f"flt_dt_{idx}"
+                params[key] = dt
+                placeholders.append(f":{key}")
+            clauses.append(f"AND document_type IN ({', '.join(placeholders)})")
 
         if filters.get("date_from"):
-            clauses.append(f"AND created_at >= '{filters['date_from']}'")
+            params["flt_date_from"] = filters["date_from"]
+            clauses.append("AND created_at >= :flt_date_from")
 
         if filters.get("date_to"):
-            clauses.append(f"AND created_at <= '{filters['date_to']}'")
+            params["flt_date_to"] = filters["date_to"]
+            clauses.append("AND created_at <= :flt_date_to")
 
         if filters.get("departments"):
-            depts = ",".join(f"'{d}'" for d in filters["departments"])
-            clauses.append(f"AND metadata->>'department' IN ({depts})")
+            placeholders = []
+            for idx, dept in enumerate(filters["departments"]):
+                key = f"flt_dept_{idx}"
+                params[key] = dept
+                placeholders.append(f":{key}")
+            clauses.append(
+                f"AND metadata->>'department' IN ({', '.join(placeholders)})"
+            )
 
         return " ".join(clauses)
 
