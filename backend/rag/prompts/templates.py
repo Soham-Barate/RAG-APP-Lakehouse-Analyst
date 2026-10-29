@@ -286,7 +286,10 @@ Table: products
 
 Table: orders
 - order_id (VARCHAR)
-- customer_id (VARCHAR)
+- customer_id (VARCHAR: references customers.customer_id)
+- product_id (VARCHAR: references products.product_id)
+- product_name (VARCHAR)
+- quantity (INTEGER)
 - order_date (VARCHAR ISO timestamp)
 - status (VARCHAR: 'delivered', 'shipped', 'processing', 'cancelled', 'returned')
 - total_amount (FLOAT)
