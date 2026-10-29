@@ -23,64 +23,49 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # SQL DDL for table creation
 # ---------------------------------------------------------------------------
-CREATE_TABLES_SQL = """
--- Enable pgvector extension
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE_TABLES_STATEMENTS = [
+    "CREATE EXTENSION IF NOT EXISTS vector",
+    """CREATE TABLE IF NOT EXISTS parent_documents (
+        id          TEXT PRIMARY KEY,
+        content     TEXT NOT NULL,
+        metadata    JSONB DEFAULT '{{}}',
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    """CREATE TABLE IF NOT EXISTS documents (
+        id              TEXT PRIMARY KEY,
+        parent_id       TEXT REFERENCES parent_documents(id) ON DELETE CASCADE,
+        content         TEXT NOT NULL,
+        embedding       vector({dimensions}),
+        content_tsv     tsvector,
+        metadata        JSONB DEFAULT '{{}}',
+        document_type   TEXT DEFAULT 'product',
+        category        TEXT,
+        created_at      TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    """CREATE INDEX IF NOT EXISTS idx_documents_embedding_hnsw
+        ON documents USING hnsw (embedding vector_cosine_ops)
+        WITH (m = 16, ef_construction = 200)""",
+    """CREATE INDEX IF NOT EXISTS idx_documents_content_tsv
+        ON documents USING gin (content_tsv)""",
+    """CREATE INDEX IF NOT EXISTS idx_documents_metadata
+        ON documents USING gin (metadata)""",
+    """CREATE INDEX IF NOT EXISTS idx_documents_type
+        ON documents (document_type)""",
+    """CREATE INDEX IF NOT EXISTS idx_documents_category
+        ON documents (category)""",
+    """CREATE OR REPLACE FUNCTION update_tsv() RETURNS trigger AS $$
+    BEGIN
+        NEW.content_tsv := to_tsvector('english', COALESCE(NEW.content, ''));
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql""",
+    "DROP TRIGGER IF EXISTS trg_update_tsv ON documents",
+    """CREATE TRIGGER trg_update_tsv
+        BEFORE INSERT OR UPDATE ON documents
+        FOR EACH ROW EXECUTE FUNCTION update_tsv()""",
+]
 
--- Parent documents table (large chunks for full context)
-CREATE TABLE IF NOT EXISTS parent_documents (
-    id          TEXT PRIMARY KEY,
-    content     TEXT NOT NULL,
-    metadata    JSONB DEFAULT '{{}}',
-    created_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Child documents table (small chunks for precise retrieval)
-CREATE TABLE IF NOT EXISTS documents (
-    id              TEXT PRIMARY KEY,
-    parent_id       TEXT REFERENCES parent_documents(id) ON DELETE CASCADE,
-    content         TEXT NOT NULL,
-    embedding       vector({dimensions}),
-    content_tsv     tsvector,
-    metadata        JSONB DEFAULT '{{}}',
-    document_type   TEXT DEFAULT 'product',
-    category        TEXT,
-    created_at      TIMESTAMPTZ DEFAULT NOW()
-);
-
--- HNSW index for fast vector similarity search
-CREATE INDEX IF NOT EXISTS idx_documents_embedding_hnsw
-    ON documents USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 200);
-
--- GIN index for full-text search
-CREATE INDEX IF NOT EXISTS idx_documents_content_tsv
-    ON documents USING gin (content_tsv);
-
--- JSONB index for metadata filtering
-CREATE INDEX IF NOT EXISTS idx_documents_metadata
-    ON documents USING gin (metadata);
-
--- Index for document type and category filtering
-CREATE INDEX IF NOT EXISTS idx_documents_type
-    ON documents (document_type);
-
-CREATE INDEX IF NOT EXISTS idx_documents_category
-    ON documents (category);
-
--- Trigger to auto-update tsvector column
-CREATE OR REPLACE FUNCTION update_tsv() RETURNS trigger AS $$
-BEGIN
-    NEW.content_tsv := to_tsvector('english', COALESCE(NEW.content, ''));
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_update_tsv ON documents;
-CREATE TRIGGER trg_update_tsv
-    BEFORE INSERT OR UPDATE ON documents
-    FOR EACH ROW EXECUTE FUNCTION update_tsv();
-"""
+CREATE_TABLES_SQL = ";\n\n".join(CREATE_TABLES_STATEMENTS) + ";"
 
 # ---------------------------------------------------------------------------
 # Hybrid search SQL with RRF fusion
@@ -163,14 +148,12 @@ class PgVectorStore(VectorStoreBase):
 
     async def initialize(self) -> None:
         """Create tables and indexes if they don't exist."""
-        ddl = CREATE_TABLES_SQL.format(dimensions=self.dimensions)
         try:
             async with self.engine.begin() as conn:
-                # Execute each statement separately
-                for statement in ddl.split(";"):
-                    statement = statement.strip()
-                    if statement:
-                        await conn.execute(text(statement))
+                for statement in CREATE_TABLES_STATEMENTS:
+                    stmt = statement.format(dimensions=self.dimensions).strip()
+                    if stmt:
+                        await conn.execute(text(stmt))
             logger.info("pgvector tables and indexes initialized")
         except Exception as exc:
             logger.error("Failed to initialize pgvector tables: %s", exc)
