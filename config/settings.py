@@ -41,7 +41,7 @@ class LogFormat(str, Enum):
 class OpenAISettings(BaseSettings):
     """OpenAI provider settings."""
 
-    model_config = SettingsConfigDict(env_prefix="OPENAI_")
+    model_config = SettingsConfigDict(env_prefix="OPENAI_", env_file=".env", extra="ignore")
 
     api_key: SecretStr = Field(default=SecretStr(""), description="OpenAI API key")
     model: str = Field(default="gpt-4o", description="Primary LLM model")
@@ -56,7 +56,7 @@ class OpenAISettings(BaseSettings):
 class GroqSettings(BaseSettings):
     """Groq fallback LLM settings."""
 
-    model_config = SettingsConfigDict(env_prefix="GROQ_")
+    model_config = SettingsConfigDict(env_prefix="GROQ_", env_file=".env", extra="ignore")
 
     api_key: SecretStr = Field(default=SecretStr(""), description="Groq API key")
     model: str = Field(
@@ -67,7 +67,7 @@ class GroqSettings(BaseSettings):
 class CohereSettings(BaseSettings):
     """Cohere reranker settings."""
 
-    model_config = SettingsConfigDict(env_prefix="COHERE_")
+    model_config = SettingsConfigDict(env_prefix="COHERE_", env_file=".env", extra="ignore")
 
     api_key: SecretStr = Field(default=SecretStr(""), description="Cohere API key")
     rerank_model: str = Field(
@@ -78,7 +78,7 @@ class CohereSettings(BaseSettings):
 class PostgresSettings(BaseSettings):
     """PostgreSQL + pgvector settings."""
 
-    model_config = SettingsConfigDict(env_prefix="POSTGRES_")
+    model_config = SettingsConfigDict(env_prefix="POSTGRES_", env_file=".env", extra="ignore")
 
     host: str = Field(default="localhost")
     port: int = Field(default=5432)
@@ -108,7 +108,7 @@ class PostgresSettings(BaseSettings):
 class PineconeSettings(BaseSettings):
     """Pinecone Serverless settings."""
 
-    model_config = SettingsConfigDict(env_prefix="PINECONE_")
+    model_config = SettingsConfigDict(env_prefix="PINECONE_", env_file=".env", extra="ignore")
 
     api_key: SecretStr = Field(default=SecretStr(""), description="Pinecone API key")
     index_name: str = Field(default="ecommerce-rag")
@@ -119,7 +119,7 @@ class PineconeSettings(BaseSettings):
 class RedisSettings(BaseSettings):
     """Redis cache settings."""
 
-    model_config = SettingsConfigDict(env_prefix="REDIS_")
+    model_config = SettingsConfigDict(env_prefix="REDIS_", env_file=".env", extra="ignore")
 
     url: str = Field(default="redis://localhost:6379/0")
     cache_ttl_seconds: int = Field(default=3600, description="Cache TTL in seconds")
@@ -128,7 +128,7 @@ class RedisSettings(BaseSettings):
 class RateLimitSettings(BaseSettings):
     """Rate limiting configuration."""
 
-    model_config = SettingsConfigDict(env_prefix="RATE_LIMIT_")
+    model_config = SettingsConfigDict(env_prefix="RATE_LIMIT_", env_file=".env", extra="ignore")
 
     requests_per_minute: int = Field(default=60)
     tokens_per_minute: int = Field(default=100_000)
@@ -140,6 +140,8 @@ class RateLimitSettings(BaseSettings):
 
 class RAGSettings(BaseSettings):
     """RAG pipeline parameters."""
+
+    model_config = SettingsConfigDict(env_prefix="RAG_", env_file=".env", extra="ignore")
 
     retrieval_top_k: int = Field(
         default=20, description="Initial retrieval candidate count"
@@ -176,7 +178,7 @@ class RAGSettings(BaseSettings):
 class ObservabilitySettings(BaseSettings):
     """Tracing and monitoring settings."""
 
-    model_config = SettingsConfigDict(env_prefix="LANGSMITH_")
+    model_config = SettingsConfigDict(env_prefix="LANGSMITH_", env_file=".env", extra="ignore")
 
     api_key: SecretStr = Field(default=SecretStr(""), description="LangSmith API key")
     project: str = Field(default="ecommerce-rag-prod")

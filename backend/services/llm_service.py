@@ -96,6 +96,12 @@ class LLMService:
         Returns:
             Generated text response
         """
+        openai_key = self.settings.openai.api_key.get_secret_value()
+        if not openai_key:
+            return await self._generate_groq(
+                prompt, system_prompt, temperature, max_tokens, json_mode
+            )
+
         try:
             return await self._generate_openai(
                 prompt, system_prompt, temperature, max_tokens, json_mode
