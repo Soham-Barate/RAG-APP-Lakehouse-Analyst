@@ -40,6 +40,7 @@ async def health_check(request: Request) -> HealthResponse:
     if db_engine:
         try:
             import asyncio
+
             from sqlalchemy import text
 
             async def _check_db():

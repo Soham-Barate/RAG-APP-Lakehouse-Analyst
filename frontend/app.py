@@ -1,9 +1,11 @@
 """
 RAG Lakehouse Analyst — Executive Streamlit Frontend
 
-An enterprise dual-path analytics interface combining:
-- DuckDB structured analytical queries (Text-to-SQL)
-- Hybrid vector & BM25 unstructured retrieval (pgvector + RRF)
+An enterprise dual-path analytics platform combining:
+- DuckDB structured analytical queries (Safe Text-to-SQL execution over Parquet lakehouse)
+- Hybrid vector & BM25 unstructured retrieval (pgvector + Reciprocal Rank Fusion)
+- Interactive Lakehouse Table & Schema Explorer
+- Real Cluster Telemetry & Observability Diagnostics
 - Strict Apple/Linear-grade design restraint, zero-emoji policy, and deterministic typography.
 """
 
@@ -28,9 +30,11 @@ from frontend.components.chat_interface import (
     render_typing_indicator,
     render_user_message,
 )
+from frontend.components.diagnostics import render_diagnostics_hub
 from frontend.components.feedback_widget import render_feedback
 from frontend.components.sidebar import render_sidebar
 from frontend.components.source_display import render_sources
+from frontend.components.table_explorer import render_table_explorer
 
 # ---------------------------------------------------------------------------
 # Page Configuration
@@ -54,8 +58,10 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "conversation_id" not in st.session_state or not st.session_state.conversation_id:
     st.session_state.conversation_id = str(uuid.uuid4())
-if "system_status" not in st.session_state:
-    st.session_state.system_status = "unknown"
+if "active_view" not in st.session_state:
+    st.session_state.active_view = "ANALYSIS CONSOLE"
+if "health_info" not in st.session_state:
+    st.session_state.health_info = None
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 API_KEY = os.getenv("API_KEY", "dev-key-1")
@@ -64,20 +70,22 @@ API_KEY = os.getenv("API_KEY", "dev-key-1")
 # ---------------------------------------------------------------------------
 # Backend Communications
 # ---------------------------------------------------------------------------
-def check_backend_health() -> str:
-    """Probe the backend health endpoint."""
+def check_backend_health() -> dict[str, Any]:
+    """Probe the backend health endpoint and return status dictionary."""
     try:
         resp = httpx.get(
             f"{BACKEND_URL}/api/v1/health",
             headers={"X-API-Key": API_KEY},
-            timeout=4.0,
+            timeout=3.0,
         )
         if resp.status_code == 200:
             data = resp.json()
-            return data.get("status", "healthy")
+            data["reachable"] = True
+            return data
+        return {"reachable": True, "status": "degraded", "services": {}}
     except Exception:
         pass
-    return "degraded"
+    return {"reachable": False, "status": "offline", "services": {}}
 
 
 def send_chat_request(
@@ -147,13 +155,18 @@ def send_chat_request(
 # ---------------------------------------------------------------------------
 def main() -> None:
     """Render executive page and handle chat interactions."""
-    if st.session_state.system_status == "unknown":
-        st.session_state.system_status = check_backend_health()
+    # Probe real health once or use cached
+    health_info = check_backend_health()
+    st.session_state.health_info = health_info
 
-    sidebar_config = render_sidebar()
+    sidebar_config = render_sidebar(health_info=health_info)
 
     # Executive Top Bar
-    status_cls = "healthy" if st.session_state.system_status == "healthy" else "degraded"
+    gw_status = health_info.get("status", "offline")
+    gw_reachable = health_info.get("reachable", False)
+    status_cls = "healthy" if (gw_reachable and gw_status == "healthy") else ("standby" if gw_reachable else "degraded")
+    status_label = "ONLINE" if (gw_reachable and gw_status == "healthy") else ("DEGRADED" if gw_reachable else "OFFLINE")
+
     st.markdown(
         f"""
         <div class="app-header">
@@ -169,13 +182,43 @@ def main() -> None:
             </div>
             <div class="app-status-badge">
                 <span class="status-indicator-dot {status_cls}"></span>
-                <span>GATEWAY {st.session_state.system_status.upper()}</span>
+                <span>GATEWAY {status_label}</span>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
+    # Top-Level Segmented Control Navigation
+    active_view = st.segmented_control(
+        "Navigation View",
+        options=["ANALYSIS CONSOLE", "LAKEHOUSE TABLE EXPLORER", "CLUSTER TELEMETRY"],
+        default=st.session_state.get("active_view", "ANALYSIS CONSOLE"),
+        key="active_view",
+        label_visibility="collapsed",
+    )
+
+    # -------------------------------------------------------------------------
+    # VIEW 1: ANALYSIS CONSOLE
+    # -------------------------------------------------------------------------
+    if active_view == "ANALYSIS CONSOLE":
+        _render_analysis_console(sidebar_config)
+
+    # -------------------------------------------------------------------------
+    # VIEW 2: LAKEHOUSE TABLE EXPLORER
+    # -------------------------------------------------------------------------
+    elif active_view == "LAKEHOUSE TABLE EXPLORER":
+        render_table_explorer()
+
+    # -------------------------------------------------------------------------
+    # VIEW 3: CLUSTER TELEMETRY
+    # -------------------------------------------------------------------------
+    elif active_view == "CLUSTER TELEMETRY":
+        render_diagnostics_hub()
+
+
+def _render_analysis_console(sidebar_config: dict[str, Any]) -> None:
+    """Render the primary analytical conversation interface."""
     # Empty State or Message History
     if not st.session_state.messages:
         starter_query = render_starter_prompts()

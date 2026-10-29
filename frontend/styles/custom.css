@@ -748,3 +748,216 @@ section[data-testid="stSidebar"] .block-container {
     font-family: var(--font-mono);
     color: var(--text-muted);
 }
+
+
+/* Infrastructure Dot Offline */
+.infra-node-dot.offline {
+    background-color: var(--status-danger);
+}
+
+/* ============================================================
+   Lakehouse Table Explorer & Telemetry Components
+   ============================================================ */
+
+/* Dataset Metadata Ribbon */
+.dataset-meta-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: #0f1523;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    margin-bottom: 0.5rem;
+}
+
+.dataset-meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+}
+
+.dataset-meta-label {
+    font-size: 0.5625rem;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.dataset-meta-value {
+    font-size: 0.8125rem;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* Medallion Tier Badges */
+.tier-badge {
+    font-size: 0.625rem;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    padding: 0.125rem 0.4375rem;
+    border-radius: var(--radius-xs);
+    display: inline-block;
+    letter-spacing: 0.04em;
+}
+
+.tier-gold {
+    background: rgba(245, 158, 11, 0.12);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
+.tier-silver {
+    background: rgba(148, 163, 184, 0.12);
+    color: #cbd5e1;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+}
+
+.tier-bronze {
+    background: rgba(217, 119, 6, 0.12);
+    color: #f59e0b;
+    border: 1px solid rgba(217, 119, 6, 0.28);
+}
+
+/* Telemetry Diagnostics Banner */
+.telemetry-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.875rem 1.125rem;
+    background: #0d131f;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    margin-bottom: 1.25rem;
+}
+
+.telemetry-banner-group {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+/* Node Health Tile Card */
+.node-tile-card {
+    background: #0e1422;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 0.75rem 0.875rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 110px;
+    transition: border-color var(--transition-fast);
+}
+
+.node-tile-card:hover {
+    border-color: var(--border-strong);
+}
+
+/* Inline Status Pill */
+.status-badge-inline {
+    font-size: 0.5625rem;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    padding: 0.1rem 0.35rem;
+    border-radius: var(--radius-xs);
+    display: inline-block;
+    letter-spacing: 0.04em;
+}
+
+.status-badge-inline.online {
+    background: var(--status-success-subtle);
+    color: var(--status-success);
+    border: 1px solid var(--status-success-border);
+}
+
+.status-badge-inline.standby {
+    background: var(--status-warning-subtle);
+    color: var(--status-warning);
+    border: 1px solid var(--status-warning-border);
+}
+
+.status-badge-inline.offline {
+    background: var(--status-danger-subtle);
+    color: var(--status-danger);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/* Schema Governance Callout */
+.schema-note-box {
+    background: #0b111a;
+    border-left: 3px solid var(--accent-primary);
+    border-top: 1px solid var(--border-subtle);
+    border-right: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    padding: 0.625rem 0.875rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-top: 0.75rem;
+}
+
+/* Streamlit Tabs Styling Overhaul */
+div[data-testid="stTabs"] {
+    margin-top: 0.5rem;
+}
+
+div[data-testid="stTabs"] div[role="tablist"] {
+    border-bottom: 1px solid var(--border-subtle);
+    gap: 0.5rem;
+    background: transparent;
+    padding-bottom: 0;
+}
+
+div[data-testid="stTabs"] button[role="tab"] {
+    font-family: var(--font-mono) !important;
+    font-size: 0.75rem !important;
+    font-weight: 500 !important;
+    color: var(--text-muted) !important;
+    background: transparent !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    border-radius: 0 !important;
+    padding: 0.5rem 0.875rem !important;
+    transition: color var(--transition-fast), border-color var(--transition-fast) !important;
+}
+
+div[data-testid="stTabs"] button[role="tab"]:hover {
+    color: var(--text-primary) !important;
+}
+
+div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+    color: var(--text-primary) !important;
+    border-bottom: 2px solid var(--accent-primary) !important;
+    font-weight: 600 !important;
+}
+
+/* Horizontal Overflow Protection Gate (ckw-design §4) */
+@media (max-width: 1024px) {
+    .main .block-container {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+}
+
+@media (max-width: 640px) {
+    .app-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+    .dataset-meta-banner {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .telemetry-banner {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

@@ -1,6 +1,7 @@
 """
 Sidebar component for Lakehouse Analyst.
-Configures metadata filters, engine toggles, infrastructure health, and session lifecycle.
+Configures metadata filters, engine toggles, dynamic infrastructure health, and session lifecycle.
+Follows zero-emoji policy, Linear/Apple craft, and honest telemetry reporting.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from typing import Any
 import streamlit as st
 
 
-def render_sidebar() -> dict[str, Any]:
+def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Render executive sidebar controls and return active filter & toggle dictionary.
     """
@@ -34,9 +35,21 @@ def render_sidebar() -> dict[str, Any]:
             st.session_state.conversation_id = str(uuid.uuid4())
             st.rerun()
 
-        # Infrastructure Health Card
-        system_status = st.session_state.get("system_status", "unknown")
-        status_dot_cls = "online" if system_status == "healthy" else ("standby" if system_status == "degraded" else "offline")
+        # Dynamic Infrastructure Cluster Health Card
+        health = health_info or {}
+        gateway_reachable = health.get("reachable", False)
+        system_status = health.get("status", "unknown")
+        gw_dot = "online" if gateway_reachable and system_status == "healthy" else ("standby" if gateway_reachable else "offline")
+        gw_label = "ONLINE" if gateway_reachable and system_status == "healthy" else ("DEGRADED" if gateway_reachable else "OFFLINE")
+
+        services = health.get("services", {})
+        pg_state = services.get("postgres", "not_configured")
+        pg_dot = "online" if pg_state == "healthy" else ("standby" if pg_state == "not_configured" else "offline")
+        pg_label = "CONNECTED" if pg_state == "healthy" else ("STANDBY" if pg_state == "not_configured" else "OFFLINE")
+
+        rd_state = services.get("redis", "not_configured")
+        rd_dot = "online" if rd_state == "healthy" else ("standby" if rd_state == "not_configured" else "offline")
+        rd_label = "ACTIVE" if rd_state == "healthy" else ("STANDBY" if rd_state == "not_configured" else "OFFLINE")
 
         st.markdown(
             '<div class="sidebar-section-header">Infrastructure Cluster</div>',
@@ -47,20 +60,20 @@ def render_sidebar() -> dict[str, Any]:
             f"""
             <div class="infra-health-card">
                 <div class="infra-node-item">
-                    <span><span class="infra-node-dot {status_dot_cls}"></span>FastAPI Gateway</span>
-                    <span style="color:var(--text-muted);">{system_status.upper()}</span>
+                    <span><span class="infra-node-dot {gw_dot}"></span>FastAPI Gateway</span>
+                    <span style="color:var(--text-muted); font-size:0.6875rem;">{gw_label}</span>
                 </div>
                 <div class="infra-node-item">
-                    <span><span class="infra-node-dot online"></span>DuckDB Analytical Engine</span>
-                    <span style="color:var(--text-muted);">READY</span>
+                    <span><span class="infra-node-dot online"></span>DuckDB Analytical OLAP</span>
+                    <span style="color:var(--text-muted); font-size:0.6875rem;">READY</span>
                 </div>
                 <div class="infra-node-item">
-                    <span><span class="infra-node-dot online"></span>PostgreSQL pgvector</span>
-                    <span style="color:var(--text-muted);">CONNECTED</span>
+                    <span><span class="infra-node-dot {pg_dot}"></span>PostgreSQL pgvector</span>
+                    <span style="color:var(--text-muted); font-size:0.6875rem;">{pg_label}</span>
                 </div>
                 <div class="infra-node-item">
-                    <span><span class="infra-node-dot online"></span>Redis Semantic Cache</span>
-                    <span style="color:var(--text-muted);">ACTIVE</span>
+                    <span><span class="infra-node-dot {rd_dot}"></span>Redis Semantic Cache</span>
+                    <span style="color:var(--text-muted); font-size:0.6875rem;">{rd_label}</span>
                 </div>
             </div>
             """,
@@ -148,13 +161,13 @@ def render_sidebar() -> dict[str, Any]:
             unsafe_allow_html=True,
         )
 
-    return {
-        "categories": categories or None,
-        "document_types": doc_types or None,
-        "date_from": date_from.isoformat() if date_from else None,
-        "date_to": date_to.isoformat() if date_to else None,
-        "max_results": max_results,
-        "show_sql": show_sql,
-        "show_sources": show_sources,
-        "show_metrics": show_metrics,
-    }
+        return {
+            "categories": categories,
+            "document_types": doc_types,
+            "date_from": str(date_from) if date_from else None,
+            "date_to": str(date_to) if date_to else None,
+            "max_results": max_results,
+            "show_sql": show_sql,
+            "show_sources": show_sources,
+            "show_metrics": show_metrics,
+        }

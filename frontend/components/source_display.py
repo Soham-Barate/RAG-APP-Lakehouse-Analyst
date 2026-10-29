@@ -1,6 +1,6 @@
 """
 Evidence & source citation display component for structured SQL tables and vector chunks.
-Follows Linear-grade data layout and ckw-design algorithm transparency principles.
+Follows Linear-grade data layout, automatic chart synthesis, and ckw-design algorithm transparency principles.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _render_sql_evidence(
     sql_query: str | None,
     sql_results: list[dict[str, Any]] | None,
 ) -> None:
-    """Render DuckDB SQL query execution and tabular analytical results."""
+    """Render DuckDB SQL query execution, visualization, and tabular analytical results."""
     row_count = len(sql_results) if sql_results else 0
 
     with st.expander(f"STRUCTURED LAKEHOUSE EVIDENCE ({row_count} rows returned)", expanded=False):
@@ -54,10 +54,25 @@ def _render_sql_evidence(
 
         if sql_results and len(sql_results) > 0:
             df = pd.DataFrame(sql_results)
+
+            # Automatic Chart Synthesis for Analytical Results
+            _render_sql_chart(df)
+
+            # Data Table
             st.dataframe(
                 df,
                 use_container_width=True,
                 hide_index=True,
+            )
+
+            # CSV Export
+            csv_bytes = df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label=f"Export {len(df)} Rows as CSV",
+                data=csv_bytes,
+                file_name="lakehouse_query_result.csv",
+                mime="text/csv",
+                key=f"dl_sql_{hash(sql_query or '')}_{len(df)}",
             )
         elif sql_query:
             st.markdown(
@@ -65,6 +80,33 @@ def _render_sql_evidence(
                 'Query executed successfully with zero rows returned.</div>',
                 unsafe_allow_html=True,
             )
+
+
+def _render_sql_chart(df: pd.DataFrame) -> None:
+    """Detect if dataframe contains suitable columns for charting."""
+    if len(df) < 2 or len(df.columns) < 2:
+        return
+
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    categorical_cols = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
+
+    if categorical_cols and numeric_cols:
+        cat_col = categorical_cols[0]
+        num_col = numeric_cols[0]
+
+        # Only chart if categories are bounded (<= 25 items) to avoid unreadable squished bars
+        if df[cat_col].nunique() <= 25:
+            st.markdown(
+                f'<div style="font-size:0.6875rem; font-family:var(--font-mono); color:var(--text-muted); '
+                f'text-transform:uppercase; margin:0.75rem 0 0.25rem 0;">'
+                f'Result Visualization: {num_col} by {cat_col}</div>',
+                unsafe_allow_html=True,
+            )
+            try:
+                chart_df = df[[cat_col, num_col]].dropna().set_index(cat_col)
+                st.bar_chart(chart_df, height=220)
+            except Exception:
+                pass
 
 
 def _render_vector_citations(sources: list[dict[str, Any]]) -> None:
@@ -75,21 +117,24 @@ def _render_vector_citations(sources: list[dict[str, Any]]) -> None:
         for i, source in enumerate(sources):
             _render_single_source(source, i + 1)
 
-        # Mathematical RRF Explainer Note (ckw-design §7)
+        # Mathematical RRF Explainer Note (ckw-design §7: show equation & annotate terms)
         st.markdown(
             """
             <div class="formula-callout">
-                <div style="font-weight:600; margin-bottom:0.25rem; color:var(--text-secondary);">
-                    Hybrid Retrieval & Reciprocal Rank Fusion (RRF)
+                <div style="font-weight:600; margin-bottom:0.375rem; color:var(--text-secondary); font-size:0.8125rem;">
+                    Hybrid Retrieval & Reciprocal Rank Fusion (RRF) Mathematical Spec
                 </div>
-                <div>
-                    Document relevance combines pgvector cosine similarity and PostgreSQL tsvector BM25 keyword rankings via:
+                <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.375rem;">
+                    Dense semantic vectors (pgvector cosine) and sparse lexical keywords (PostgreSQL tsvector BM25) are fused without scale bias:
                 </div>
-                <div style="margin:0.375rem 0; font-family:var(--font-mono); color:var(--accent-primary);">
-                    RRF(d) = &sum; [ 1 / (60 + rank_m(d)) ]
+                <div style="margin:0.5rem 0; font-family:var(--font-mono); font-size:0.875rem; color:var(--accent-primary); letter-spacing:0.02em;">
+                    RRF(d) = &sum;<sub>m &isin; M</sub> [ 1 / (k + rank<sub>m</sub>(d)) ]
                 </div>
-                <div>
-                    where <code>m &isin; {Dense, Sparse}</code> and constant <code>k = 60</code> dampens outlier bias before Cross-Encoder reranking.
+                <div style="font-size:0.6875rem; color:var(--text-muted); line-height:1.6; border-top:1px solid var(--border-subtle); padding-top:0.375rem;">
+                    <div>&bull; <code>M</code> &isin; {Dense pgvector, Sparse BM25}: Independent retrieval model rankers</div>
+                    <div>&bull; <code>rank<sub>m</sub>(d)</code>: 1-indexed rank position of document <code>d</code> within retrieval model <code>m</code></div>
+                    <div>&bull; <code>k = 60</code>: Smoothing constant dampening outlier impact from single-channel dominance</div>
+                    <div>&bull; <strong>Decision Rule:</strong> Top <code>N</code> fused candidate documents are passed to Cross-Encoder reranking.</div>
                 </div>
             </div>
             """,
@@ -111,9 +156,9 @@ def _render_single_source(source: dict[str, Any], index: int) -> None:
 
     # Metadata chips
     meta_chips = []
-    for key in ["category", "parent_id", "product_id", "order_id", "source_file"]:
+    for key in ["category", "parent_id", "product_id", "order_id", "source_file", "rating"]:
         val = metadata.get(key)
-        if val:
+        if val is not None:
             meta_chips.append(f'<span class="source-meta-chip">{key}: {html.escape(str(val))}</span>')
     chips_html = "".join(meta_chips)
 
