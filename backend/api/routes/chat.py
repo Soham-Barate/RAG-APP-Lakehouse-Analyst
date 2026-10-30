@@ -47,6 +47,17 @@ async def chat(
     start = time.perf_counter()
     message_id = str(uuid.uuid4())
 
+    from backend.services.observability import (
+        ACTIVE_REQUESTS,
+        CACHE_HITS,
+        CACHE_MISSES,
+        REQUEST_COUNT,
+        REQUEST_LATENCY,
+        TOKENS_USED,
+    )
+
+    ACTIVE_REQUESTS.inc()
+
     await logger.ainfo(
         "chat_request",
         conversation_id=body.conversation_id,
@@ -54,111 +65,128 @@ async def chat(
         has_filters=body.filters is not None,
     )
 
-    # ----- 1. Check semantic cache -----
-    cache = getattr(request.app.state, "semantic_cache", None)
-    if cache:
-        filters_dict = body.filters.model_dump(exclude_none=True)
-        cached = await cache.get(body.query, filters=filters_dict)
-        if cached:
-            latency_ms = (time.perf_counter() - start) * 1000
-            await logger.ainfo("cache_hit", conversation_id=body.conversation_id)
-            cached["metrics"]["cache_hit"] = True
-            cached["metrics"]["total_latency_ms"] = round(latency_ms, 2)
-            return ChatResponse(
-                message_id=message_id,
-                conversation_id=body.conversation_id,
-                **cached,
+    try:
+        # ----- 1. Check semantic cache -----
+        cache = getattr(request.app.state, "semantic_cache", None)
+        if cache:
+            filters_dict = body.filters.model_dump(exclude_none=True)
+            cached = await cache.get(body.query, filters=filters_dict)
+            if cached:
+                latency_ms = (time.perf_counter() - start) * 1000
+                await logger.ainfo("cache_hit", conversation_id=body.conversation_id)
+                CACHE_HITS.inc()
+                REQUEST_COUNT.labels(endpoint="/chat", status="200").inc()
+                REQUEST_LATENCY.labels(endpoint="/chat").observe(latency_ms / 1000.0)
+                cached["metrics"]["cache_hit"] = True
+                cached["metrics"]["total_latency_ms"] = round(latency_ms, 2)
+                return ChatResponse(
+                    message_id=message_id,
+                    conversation_id=body.conversation_id,
+                    **cached,
+                )
+            else:
+                CACHE_MISSES.inc()
+
+        # ----- 2. Invoke RAG pipeline -----
+        rag_graph = getattr(request.app.state, "rag_graph", None)
+        if rag_graph is None:
+            await logger.awarning("rag_pipeline_uninitialized", conversation_id=body.conversation_id)
+            REQUEST_COUNT.labels(endpoint="/chat", status="503").inc()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The RAG pipeline is not yet initialized. Please run data ingestion first or check service health.",
             )
 
-    # ----- 2. Invoke RAG pipeline -----
-    rag_graph = getattr(request.app.state, "rag_graph", None)
-    if rag_graph is None:
-        await logger.awarning("rag_pipeline_uninitialized", conversation_id=body.conversation_id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The RAG pipeline is not yet initialized. Please run data ingestion first or check service health.",
-        )
-
-    # Build pipeline input state
-    filters_dict = body.filters.model_dump(exclude_none=True)
-    if body.dataset_id:
-        filters_dict["dataset_id"] = body.dataset_id
-
-    pipeline_input = {
-        "query": body.query,
-        "conversation_id": body.conversation_id,
-        "dataset_id": body.dataset_id,
-        "metadata_filters": filters_dict,
-        "max_results": body.max_results,
-        "messages": [],
-        "iteration_count": 0,
-        "fast_mode": True,
-    }
-
-    try:
-        result = await rag_graph.ainvoke(pipeline_input)
-    except Exception as exc:
-        latency_ms = (time.perf_counter() - start) * 1000
-        await logger.aerror(
-            "pipeline_error",
-            conversation_id=body.conversation_id,
-            error=str(exc),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while executing the RAG pipeline. Please retry.",
-        )
-
-    latency_ms = (time.perf_counter() - start) * 1000
-
-    # Build response
-    response = ChatResponse(
-        message_id=message_id,
-        conversation_id=body.conversation_id,
-        answer=result.get("answer", "No answer generated."),
-        confidence_score=result.get("confidence_score", 0.0),
-        sources=result.get("sources", []),
-        sql_query=result.get("sql_query"),
-        sql_results=result.get("sql_results"),
-        route=result.get("route"),
-        metrics=PipelineMetrics(
-            total_latency_ms=round(latency_ms, 2),
-            retrieval_latency_ms=result.get("retrieval_latency_ms", 0.0),
-            reranking_latency_ms=result.get("reranking_latency_ms", 0.0),
-            generation_latency_ms=result.get("generation_latency_ms", 0.0),
-            tokens_used=result.get("tokens_used", 0),
-            retrieval_iterations=result.get("iteration_count", 1),
-            cache_hit=False,
-            documents_retrieved=result.get("documents_retrieved", 0),
-            documents_after_rerank=result.get("documents_after_rerank", 0),
-        ),
-        disclaimer=result.get("disclaimer"),
-    )
-
-    # ----- 3. Cache the result -----
-    if cache and response.confidence_score > 0.3:
+        # Build pipeline input state
         filters_dict = body.filters.model_dump(exclude_none=True)
-        await cache.set(
-            body.query,
-            {
-                "answer": response.answer,
-                "confidence_score": response.confidence_score,
-                "sources": [s.model_dump() for s in response.sources],
-                "metrics": response.metrics.model_dump(),
-            },
-            filters=filters_dict,
+        if body.dataset_id:
+            filters_dict["dataset_id"] = body.dataset_id
+
+        pipeline_input = {
+            "query": body.query,
+            "conversation_id": body.conversation_id,
+            "dataset_id": body.dataset_id,
+            "metadata_filters": filters_dict,
+            "max_results": body.max_results,
+            "messages": [],
+            "iteration_count": 0,
+            "fast_mode": True,
+        }
+
+        try:
+            result = await rag_graph.ainvoke(pipeline_input)
+        except Exception as exc:
+            latency_ms = (time.perf_counter() - start) * 1000
+            await logger.aerror(
+                "pipeline_error",
+                conversation_id=body.conversation_id,
+                error=str(exc),
+            )
+            REQUEST_COUNT.labels(endpoint="/chat", status="500").inc()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An error occurred while executing the RAG pipeline. Please retry.",
+            )
+
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        # Build response
+        response = ChatResponse(
+            message_id=message_id,
+            conversation_id=body.conversation_id,
+            answer=result.get("answer", "No answer generated."),
+            confidence_score=result.get("confidence_score", 0.0),
+            sources=result.get("sources", []),
+            sql_query=result.get("sql_query"),
+            sql_results=result.get("sql_results"),
+            route=result.get("route"),
+            metrics=PipelineMetrics(
+                total_latency_ms=round(latency_ms, 2),
+                retrieval_latency_ms=result.get("retrieval_latency_ms", 0.0),
+                reranking_latency_ms=result.get("reranking_latency_ms", 0.0),
+                generation_latency_ms=result.get("generation_latency_ms", 0.0),
+                tokens_used=result.get("tokens_used", 0),
+                retrieval_iterations=result.get("iteration_count", 1),
+                cache_hit=False,
+                documents_retrieved=result.get("documents_retrieved", 0),
+                documents_after_rerank=result.get("documents_after_rerank", 0),
+            ),
+            disclaimer=result.get("disclaimer"),
         )
 
-    await logger.ainfo(
-        "chat_response",
-        conversation_id=body.conversation_id,
-        confidence=response.confidence_score,
-        sources_count=len(response.sources),
-        latency_ms=round(latency_ms, 2),
-        tokens_used=response.metrics.tokens_used,
-    )
+        # Record Prometheus telemetry metrics
+        REQUEST_COUNT.labels(endpoint="/chat", status="200").inc()
+        REQUEST_LATENCY.labels(endpoint="/chat").observe(latency_ms / 1000.0)
+        tokens_count = response.metrics.tokens_used or 0
+        if tokens_count > 0:
+            TOKENS_USED.labels(provider="groq", operation="chat").inc(tokens_count)
 
-    return response
+        # ----- 3. Cache the result -----
+        if cache and response.confidence_score > 0.3:
+            filters_dict = body.filters.model_dump(exclude_none=True)
+            await cache.set(
+                body.query,
+                {
+                    "answer": response.answer,
+                    "confidence_score": response.confidence_score,
+                    "sources": [s.model_dump() for s in response.sources],
+                    "metrics": response.metrics.model_dump(),
+                },
+                filters=filters_dict,
+            )
+
+        await logger.ainfo(
+            "chat_response",
+            conversation_id=body.conversation_id,
+            confidence=response.confidence_score,
+            sources_count=len(response.sources),
+            latency_ms=round(latency_ms, 2),
+            tokens_used=response.metrics.tokens_used,
+        )
+
+        return response
+    finally:
+        ACTIVE_REQUESTS.dec()
 
 
 @router.post("/stream")
