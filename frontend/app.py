@@ -199,7 +199,6 @@ def main() -> None:
     active_view = st.segmented_control(
         "Navigation View",
         options=["ANALYSIS CONSOLE", "DATASET MANAGER", "LAKEHOUSE TABLE EXPLORER", "CLUSTER TELEMETRY"],
-        default=st.session_state.get("active_view", "ANALYSIS CONSOLE"),
         key="active_view",
         label_visibility="collapsed",
     )

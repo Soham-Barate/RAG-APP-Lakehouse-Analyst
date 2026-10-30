@@ -84,6 +84,12 @@ services:
       --server.port 8501
       --server.address 0.0.0.0
       --server.headless true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8501/_stcore/health'); exit(0 if r.status_code == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
     environment:
       BACKEND_URL: http://backend:8000
       API_KEY: ${API_KEY:-dev-key-1}
