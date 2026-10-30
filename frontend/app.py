@@ -11,6 +11,7 @@ An enterprise dual-path analytics platform combining:
 
 from __future__ import annotations
 
+import html
 import os
 import sys
 import uuid
