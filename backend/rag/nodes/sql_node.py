@@ -292,6 +292,8 @@ class SafeSQLNode:
         for i, token in enumerate(tokens):
             if token in ("from", "join") and i + 1 < len(tokens):
                 tbl = tokens[i + 1]
+                if tbl in ("select", "with", "unnest", "values"):
+                    continue
                 if tbl not in permitted_tables:
                     raise SQLValidationError(f"Table '{tbl}' is not permitted.")
                 found_tables.add(tbl)

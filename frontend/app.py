@@ -354,12 +354,19 @@ def _render_analysis_console(sidebar_config: dict[str, Any]) -> None:
                 vector_src = msg.get("sources") if sidebar_config.get("show_sources") else None
 
                 if sql_q or sql_res or sql_err or vector_src:
-                    render_sources(
-                        sources=vector_src,
-                        sql_query=sql_q,
-                        sql_results=sql_res,
-                        sql_error=sql_err,
-                    )
+                    try:
+                        render_sources(
+                            sources=vector_src,
+                            sql_query=sql_q,
+                            sql_results=sql_res,
+                            sql_error=sql_err,
+                        )
+                    except TypeError:
+                        render_sources(
+                            sources=vector_src,
+                            sql_query=sql_q,
+                            sql_results=sql_res,
+                        )
 
                 # Render Pipeline Metrics Ribbon
                 if sidebar_config.get("show_metrics") and msg.get("metrics"):

@@ -26,6 +26,18 @@ class QueryRouter:
     async def __call__(self, state: RAGState) -> dict[str, Any]:
         """Classify the query and set the route in state."""
         query = state["query"]
+        q_lower = query.lower().strip()
+
+        # Deterministic fast-path: identity, dataset metadata, and greetings do not require SQL
+        meta_phrases = (
+            "which dataset", "what dataset", "name it", "dataset name",
+            "active dataset", "which database", "what database", "current database",
+            "active table", "which table", "what table", "current table",
+            "who are you", "what can you do", "hello", "hi", "help"
+        )
+        if any(p in q_lower for p in meta_phrases):
+            logger.info("Query matched metadata fast-path: %s -> vector", query[:50])
+            return {"route": "vector"}
 
         try:
             prompt = ROUTER_PROMPT.format(query=query)
