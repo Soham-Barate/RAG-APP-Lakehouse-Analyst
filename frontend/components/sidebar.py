@@ -61,7 +61,7 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
             st.session_state.messages = []
             st.session_state.conversation_id = str(uuid.uuid4())
             st.session_state.active_dataset_id = "demo_lakehouse"
-            st.session_state.active_view = "ANALYSIS CONSOLE"
+            st.session_state.pending_view_navigation = "ANALYSIS CONSOLE"
             st.toast("Fresh lakehouse data generated!")
             st.rerun()
 
@@ -238,7 +238,7 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
         col_side1, col_side2 = st.columns(2)
         with col_side1:
             if st.button("View Generated Data", use_container_width=True, key="btn_view_lakehouse_data", help="Inspect newly generated or active lakehouse tables in Lakehouse Table Explorer"):
-                st.session_state.active_view = "LAKEHOUSE TABLE EXPLORER"
+                st.session_state.pending_view_navigation = "LAKEHOUSE TABLE EXPLORER"
                 st.rerun()
 
         with col_side2:

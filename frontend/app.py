@@ -69,6 +69,16 @@ if "active_view" not in st.session_state:
 if "health_info" not in st.session_state:
     st.session_state.health_info = None
 
+# Apply pending programmatic view navigation before any widgets render
+if "pending_view_navigation" in st.session_state:
+    st.session_state.active_view = st.session_state.pop("pending_view_navigation")
+
+
+def set_active_view(view_name: str) -> None:
+    """Safely trigger a view switch without violating Streamlit widget state immutability rules."""
+    st.session_state.pending_view_navigation = view_name
+    st.rerun()
+
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 API_KEY = os.getenv("API_KEY", "dev-key-1")
 
@@ -312,8 +322,7 @@ def _render_analysis_console(sidebar_config: dict[str, Any]) -> None:
 
                 st.divider()
                 if st.button("Open Full Dataset Manager", use_container_width=True, key="btn_goto_dataset_mgr"):
-                    st.session_state.active_view = "DATASET MANAGER"
-                    st.rerun()
+                    set_active_view("DATASET MANAGER")
 
     # Isolation info tag
     active_item = ds_map.get(active_ds, {})
