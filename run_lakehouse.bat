@@ -23,5 +23,7 @@ echo   - Streamlit Frontend: http://localhost:8501
 echo   - FastAPI Docs:       http://localhost:8000/docs
 echo =======================================================
 echo.
-pause
+echo Opening Streamlit Web UI in default browser...
+timeout /t 3 /nobreak >nul
+start http://localhost:8501
 

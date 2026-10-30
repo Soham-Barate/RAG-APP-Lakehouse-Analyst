@@ -6,6 +6,14 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.40-FF4B4B.svg?style=flat&logo=streamlit)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/Docker-Enabled-2496ED.svg?style=flat&logo=docker)](https://www.docker.com/)
 
+## 🌐 Quick Access Links
+
+| Application Service | Direct URL | Description |
+| :--- | :--- | :--- |
+| **Streamlit Web UI** | **[http://localhost:8501](http://localhost:8501)** | Full interactive Lakehouse Analyst analytics console, profiler, and table explorer |
+| **FastAPI Swagger Docs** | **[http://localhost:8000/docs](http://localhost:8000/docs)** | OpenAPI / Swagger interactive documentation and schema explorer |
+| **Backend Health Probe** | **[http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)** | Live system and infrastructure status JSON endpoint |
+
 A production-grade, flagship-quality Hybrid RAG application (Text-to-SQL + Vector Search) built on top of a modern Iceberg Lakehouse architecture (simulated via DuckDB / Parquet for local execution). Supports both built-in synthetic medallion lakehouse data and **real user-uploaded datasets (CSV, XLSX, Parquet, JSON)** with automated data profiling and dynamic schema-isolated SQL generation.
 
 This repository showcases advanced data engineering and AI engineering patterns: LangGraph agentic cycles, semantic caching, self-correcting retrieval loops, reciprocal rank fusion (RRF), Microsoft Presidio guardrails, RAGAS evaluations, dynamic user dataset ingestion, and a premium Streamlit interface.
