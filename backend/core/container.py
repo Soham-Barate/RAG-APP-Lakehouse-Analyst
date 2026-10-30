@@ -150,6 +150,10 @@ class ServiceContainer:
             await logger.awarning("vector_store_failed", error=str(exc))
             if self.settings.app_env in (Environment.PRODUCTION, Environment.STAGING):
                 raise RuntimeError(f"Critical service 'vector_store' failed to initialize: {exc}") from exc
+            # Fallback to InMemoryVectorStore in development so pipeline and OLAP function without Postgres
+            from backend.vectorstore.in_memory_store import InMemoryVectorStore
+            self.vector_store = InMemoryVectorStore()
+            await logger.ainfo("in_memory_vector_store_fallback_active")
 
     async def _init_llm(self) -> None:
         try:

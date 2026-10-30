@@ -92,6 +92,7 @@ async def chat(
         "max_results": body.max_results,
         "messages": [],
         "iteration_count": 0,
+        "fast_mode": True,
     }
 
     try:

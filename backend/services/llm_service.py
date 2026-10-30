@@ -181,7 +181,7 @@ class LLMService:
             "model": self._fallback_model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_tokens": min(max_tokens, 800),
         }
 
         if json_mode:
