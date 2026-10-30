@@ -80,10 +80,15 @@ async def chat(
         )
 
     # Build pipeline input state
+    filters_dict = body.filters.model_dump(exclude_none=True)
+    if body.dataset_id:
+        filters_dict["dataset_id"] = body.dataset_id
+
     pipeline_input = {
         "query": body.query,
         "conversation_id": body.conversation_id,
-        "metadata_filters": body.filters.model_dump(exclude_none=True),
+        "dataset_id": body.dataset_id,
+        "metadata_filters": filters_dict,
         "max_results": body.max_results,
         "messages": [],
         "iteration_count": 0,

@@ -26,6 +26,7 @@ class RAGState(TypedDict, total=False):
     # ----- Input (set by the API layer) -----
     query: str                            # Original user query
     conversation_id: str                  # Conversation thread ID
+    dataset_id: str                       # Active dataset ID ("demo_lakehouse" or user upload)
     metadata_filters: dict[str, Any]      # Filters from the user
     max_results: int                      # Max sources to return
     messages: list[BaseMessage]           # Conversation history

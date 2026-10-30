@@ -100,6 +100,10 @@ class ChatRequest(BaseModel):
         default_factory=lambda: str(uuid.uuid4()),
         description="Conversation thread ID",
     )
+    dataset_id: str = Field(
+        default="demo_lakehouse",
+        description="Active dataset ID ('demo_lakehouse' or user dataset ID)",
+    )
     filters: MetadataFilter = Field(
         default_factory=MetadataFilter,
         description="Optional metadata filters",

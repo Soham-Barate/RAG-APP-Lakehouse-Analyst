@@ -61,15 +61,28 @@ ALLOWED_SQL_KEYWORDS = {
     "on", "group", "by", "order", "having", "limit", "offset", "as", "distinct",
     "and", "or", "not", "is", "null", "in", "like", "ilike", "between",
     "case", "when", "then", "else", "end", "asc", "desc", "true", "false",
-    "all", "with", "over", "partition", "using", "union",
+    "all", "with", "over", "partition", "using", "union", "interval",
     # Data type casts
-    "varchar", "integer", "int", "double", "float", "boolean", "date", "timestamp"
+    "varchar", "integer", "int", "bigint", "smallint", "tinyint", "double", "float",
+    "decimal", "numeric", "boolean", "date", "timestamp", "text"
 }
 
 ALLOWED_FUNCTIONS = {
-    "count", "sum", "avg", "min", "max", "round", "coalesce", "cast",
-    "date_trunc", "extract", "year", "month", "day", "lower", "upper",
-    "trim", "concat", "length", "abs", "ceil", "floor", "row_number", "rank", "dense_rank"
+    # Aggregations
+    "count", "sum", "avg", "min", "max",
+    # Math
+    "round", "abs", "ceil", "floor", "power", "sqrt",
+    # Conditionals & Nulls
+    "coalesce", "nullif", "greatest", "least", "cast",
+    # Date & Time (DuckDB native)
+    "date_trunc", "extract", "year", "month", "day", "quarter", "epoch",
+    "strftime", "to_timestamp", "date_add", "date_sub", "datediff", "date_diff",
+    "now", "current_date", "current_timestamp", "current_time",
+    # String manipulation
+    "lower", "upper", "trim", "ltrim", "rtrim", "concat", "length",
+    "substr", "substring", "replace", "split_part",
+    # Window functions
+    "row_number", "rank", "dense_rank", "lag", "lead", "first_value", "last_value"
 }
 
 ALLOWED_IDENTIFIERS = ALL_ALLOWED_COLUMNS | ALLOWED_TABLES | ALLOWED_SQL_KEYWORDS | ALLOWED_FUNCTIONS
@@ -186,10 +199,25 @@ class SafeSQLNode:
                 ('CUST-000003', 'Platinum', 110, 15400.75, '2021-01-10T09:15:00', 'Electronics');
             """)
 
-    def validate_sql(self, sql: str) -> str:
+        # Register any user-uploaded datasets into DuckDB
+        try:
+            from backend.dataset.manager import get_dataset_manager
+            get_dataset_manager().register_all_in_duckdb(conn)
+        except Exception as e:
+            logger.warning("Could not register user datasets into DuckDB: %s", e)
+
+    def validate_sql(
+        self,
+        sql: str,
+        allowed_tables: set[str] | None = None,
+        allowed_columns: set[str] | None = None,
+    ) -> str:
         """
         Enforce strict read-only, table-allowlisted, and column-allowlisted execution security.
         """
+        target_tables = set(allowed_tables) if allowed_tables is not None else ALLOWED_TABLES
+        target_columns = set(allowed_columns) if allowed_columns is not None else ALL_ALLOWED_COLUMNS
+
         # 1. Strip SQL comments (both inline -- and block /* ... */)
         cleaned = re.sub(r"--.*?$", " ", sql, flags=re.MULTILINE)
         cleaned = re.sub(r"/\*[\s\S]*?\*/", " ", cleaned).strip().rstrip(";")
@@ -223,7 +251,7 @@ class SafeSQLNode:
         # 8. Table allowlist validation: verify tables following FROM and JOIN
         found_tables: set[str] = set()
         aliases: set[str] = set(cte_names)
-        permitted_tables = ALLOWED_TABLES | cte_names
+        permitted_tables = target_tables | cte_names
 
         for i, token in enumerate(tokens):
             if token in ("from", "join") and i + 1 < len(tokens):
@@ -244,7 +272,7 @@ class SafeSQLNode:
                 raise SQLValidationError("Query does not reference an allowlisted table.")
 
         # 9. Comprehensive Column & Identifier allowlisting
-        allowed_lookup = ALLOWED_IDENTIFIERS | aliases
+        allowed_lookup = target_columns | target_tables | ALLOWED_SQL_KEYWORDS | ALLOWED_FUNCTIONS | aliases
         for token in tokens:
             if token not in allowed_lookup:
                 raise SQLValidationError(f"Column or identifier '{token}' is not permitted in analytical queries.")
@@ -263,10 +291,27 @@ class SafeSQLNode:
         """Generate and execute SQL query for structured analytical questions."""
         start = time.perf_counter()
         query = state["query"]
+        dataset_id = state.get("dataset_id") or "demo_lakehouse"
         raw_sql = ""
 
         try:
-            prompt = TEXT_TO_SQL_PROMPT.format(query=query)
+            if dataset_id != "demo_lakehouse":
+                from backend.dataset.manager import get_dataset_manager
+                mgr = get_dataset_manager()
+                schema_prompt, primary_table, allowed_cols = mgr.get_schema_prompt_for_dataset(dataset_id)
+                prompt = (
+                    f"{schema_prompt}\n\n"
+                    f"User Question: {query}\n\n"
+                    f"Return JSON format:\n"
+                    f'{{\n  "sql": "SELECT ...",\n  "explanation": "..."\n}}'
+                )
+                target_tables = {primary_table}
+                target_columns = allowed_cols
+            else:
+                prompt = TEXT_TO_SQL_PROMPT.format(query=query)
+                target_tables = ALLOWED_TABLES
+                target_columns = ALL_ALLOWED_COLUMNS
+
             response = await self.llm_service.generate(
                 prompt=prompt,
                 temperature=0.0,
@@ -281,11 +326,18 @@ class SafeSQLNode:
             if not raw_sql:
                 raise SQLValidationError("No SQL statement generated by LLM.")
 
-            safe_sql = self.validate_sql(raw_sql)
-            logger.info("Executing safe Text-to-SQL: %s", safe_sql)
+            safe_sql = self.validate_sql(raw_sql, allowed_tables=target_tables, allowed_columns=target_columns)
+            logger.info("Executing safe Text-to-SQL for dataset %s: %s", dataset_id, safe_sql)
 
             # Execute query in DuckDB with external access locked
             conn = self._get_connection()
+            # Ensure views are up-to-date
+            try:
+                from backend.dataset.manager import get_dataset_manager
+                get_dataset_manager().register_all_in_duckdb(conn)
+            except Exception:
+                pass
+
             df = conn.execute(safe_sql).fetchdf()
             records = df.to_dict("records")
             latency_ms = (time.perf_counter() - start) * 1000
@@ -293,8 +345,9 @@ class SafeSQLNode:
             # Case A: Analytical query matched records
             if records:
                 table_md = self._format_markdown_table(df)
+                header_title = f"Structured Query Results ({dataset_id})" if dataset_id != "demo_lakehouse" else "Structured Lakehouse Query Results (DuckDB / Iceberg)"
                 context = (
-                    f"### Structured Lakehouse Query Results (DuckDB / Iceberg)\n"
+                    f"### {header_title}\n"
                     f"**Query**: `{safe_sql}`\n"
                     f"**Purpose**: {explanation}\n\n"
                     f"{table_md}\n"

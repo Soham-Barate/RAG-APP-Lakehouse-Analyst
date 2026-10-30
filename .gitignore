@@ -45,6 +45,12 @@ docker-compose.override.yml
 data/raw/*.parquet
 data/raw/*.csv
 data/iceberg/
+data/uploads/*/
+data/uploads/*.csv
+data/uploads/*.parquet
+data/uploads/manifest.json
+data/uploads/*.json
+!data/uploads/manifest.json
 *.db
 *.duckdb
 

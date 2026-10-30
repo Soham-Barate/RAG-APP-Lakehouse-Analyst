@@ -6,9 +6,20 @@
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.40-FF4B4B.svg?style=flat&logo=streamlit)](https://streamlit.io/)
 [![Docker](https://img.shields.io/badge/Docker-Enabled-2496ED.svg?style=flat&logo=docker)](https://www.docker.com/)
 
-A production-grade, flagship-quality Hybrid RAG application (Text-to-SQL + Vector Search) built on top of a modern Iceberg Lakehouse architecture (simulated via DuckDB / Parquet for local execution). 
+A production-grade, flagship-quality Hybrid RAG application (Text-to-SQL + Vector Search) built on top of a modern Iceberg Lakehouse architecture (simulated via DuckDB / Parquet for local execution). Supports both built-in synthetic medallion lakehouse data and **real user-uploaded datasets (CSV, XLSX, Parquet, JSON)** with automated data profiling and dynamic schema-isolated SQL generation.
 
-This repository showcases advanced data engineering and AI engineering patterns: LangGraph agentic cycles, semantic caching, self-correcting retrieval loops, reciprocal rank fusion (RRF), Microsoft Presidio guardrails, RAGAS evaluations, and a premium Streamlit interface.
+This repository showcases advanced data engineering and AI engineering patterns: LangGraph agentic cycles, semantic caching, self-correcting retrieval loops, reciprocal rank fusion (RRF), Microsoft Presidio guardrails, RAGAS evaluations, dynamic user dataset ingestion, and a premium Streamlit interface.
+
+---
+
+## 🚀 Key Capabilities: Real User-Uploaded Data
+
+1. **Multi-Format Ingestion**: Drag-and-drop upload for CSV, Excel (`.xlsx`, `.xls`), Parquet, and JSON / JSONL with magic-byte and schema validation.
+2. **Automated Data Profiling**: Instant analysis of row counts, missing cell rates, duplicate records, inferred SQL types, and quality risk alerts (e.g. constant columns, extreme nulls).
+3. **Dynamic Schema-Adaptive Text-to-SQL**: Translates natural language questions into safe DuckDB SQL adapting dynamically to any uploaded dataset's schema.
+4. **Strict Dataset Isolation**: Uploaded datasets are assigned unique IDs and isolated storage paths (`data/uploads/<id>/`). Queries on Dataset A cannot access Dataset B or synthetic data.
+5. **Dataset-Scoped RAG**: Automatically detects prose/text columns and indexes them into PostgreSQL pgvector with `dataset_id` metadata isolation.
+6. **Executive Streamlit Experience**: 4 dedicated operational views: Analysis Console, Dataset Manager & Profiler, Lakehouse Table Explorer, and Cluster Telemetry.
 
 ---
 

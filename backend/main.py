@@ -153,9 +153,10 @@ def create_app() -> FastAPI:
     app.include_router(feedback.router, prefix=API_V1_PREFIX)
 
     # New production routes
-    from backend.api.routes import analytics, conversations, upload
+    from backend.api.routes import analytics, conversations, dataset, upload
     app.include_router(analytics.router)
     app.include_router(conversations.router)
+    app.include_router(dataset.router)
     app.include_router(upload.router)
 
     return app

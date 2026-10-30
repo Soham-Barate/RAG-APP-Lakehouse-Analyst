@@ -92,11 +92,13 @@ def send_chat_request(
     query: str,
     filters: dict[str, Any],
     max_results: int = 5,
+    dataset_id: str = "demo_lakehouse",
 ) -> dict[str, Any]:
     """Execute a chat query against the FastAPI Lakehouse Gateway."""
     payload = {
         "query": query,
         "conversation_id": st.session_state.conversation_id,
+        "dataset_id": dataset_id,
         "filters": {k: v for k, v in filters.items() if v is not None},
         "max_results": max_results,
         "include_sources": True,
@@ -192,7 +194,7 @@ def main() -> None:
     # Top-Level Segmented Control Navigation
     active_view = st.segmented_control(
         "Navigation View",
-        options=["ANALYSIS CONSOLE", "LAKEHOUSE TABLE EXPLORER", "CLUSTER TELEMETRY"],
+        options=["ANALYSIS CONSOLE", "DATASET MANAGER", "LAKEHOUSE TABLE EXPLORER", "CLUSTER TELEMETRY"],
         default=st.session_state.get("active_view", "ANALYSIS CONSOLE"),
         key="active_view",
         label_visibility="collapsed",
@@ -205,13 +207,20 @@ def main() -> None:
         _render_analysis_console(sidebar_config)
 
     # -------------------------------------------------------------------------
-    # VIEW 2: LAKEHOUSE TABLE EXPLORER
+    # VIEW 2: DATASET MANAGER & PROFILER
+    # -------------------------------------------------------------------------
+    elif active_view == "DATASET MANAGER":
+        from frontend.components.dataset_view import render_dataset_manager
+        render_dataset_manager()
+
+    # -------------------------------------------------------------------------
+    # VIEW 3: LAKEHOUSE TABLE EXPLORER
     # -------------------------------------------------------------------------
     elif active_view == "LAKEHOUSE TABLE EXPLORER":
         render_table_explorer()
 
     # -------------------------------------------------------------------------
-    # VIEW 3: CLUSTER TELEMETRY
+    # VIEW 4: CLUSTER TELEMETRY
     # -------------------------------------------------------------------------
     elif active_view == "CLUSTER TELEMETRY":
         render_diagnostics_hub()
@@ -219,6 +228,21 @@ def main() -> None:
 
 def _render_analysis_console(sidebar_config: dict[str, Any]) -> None:
     """Render the primary analytical conversation interface."""
+    # Active Dataset Status Banner
+    active_ds = sidebar_config.get("active_dataset_id", "demo_lakehouse")
+    active_label = "Demo Lakehouse" if active_ds == "demo_lakehouse" else active_ds
+    st.markdown(
+        f"""
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:0.375rem 0.75rem; 
+                    background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); 
+                    margin-bottom:1rem; font-family:var(--font-mono); font-size:0.6875rem;">
+            <span>ACTIVE QUERY TARGET: <strong style="color:#38bdf8;">{html.escape(active_label)}</strong></span>
+            <span style="color:var(--text-muted);">ISOLATION: STRICT READ-ONLY DUCKDB</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # Empty State or Message History
     if not st.session_state.messages:
         starter_query = render_starter_prompts()
@@ -294,6 +318,7 @@ def _render_analysis_console(sidebar_config: dict[str, Any]) -> None:
                 query=query,
                 filters=filters,
                 max_results=sidebar_config.get("max_results", 5),
+                dataset_id=sidebar_config.get("active_dataset_id", "demo_lakehouse"),
             )
 
         # Append assistant message with full dual-path metadata

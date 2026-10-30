@@ -118,18 +118,16 @@ def render_assistant_message(
 
     st.markdown(
         f"""
-        <div class="message-row-assistant">
-            <div class="assistant-header-bar">
-                <div class="assistant-title-group">
-                    <div class="assistant-icon-box">{SVG_BOT}</div>
-                    <span class="assistant-name">Lakehouse Analyst</span>
-                    {route_html}
-                </div>
-                <div class="header-badges-right">
-                    <span class="confidence-pill {conf_class}">{conf_label}</span>
-                </div>
+        <div class="assistant-header-bar">
+            <div class="assistant-title-group">
+                <div class="assistant-icon-box">{SVG_BOT}</div>
+                <span class="assistant-name">Lakehouse Analyst</span>
+                {route_html}
             </div>
-            <div class="assistant-body">
+            <div class="header-badges-right">
+                <span class="confidence-pill {conf_class}">{conf_label}</span>
+            </div>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -139,8 +137,6 @@ def render_assistant_message(
 
     if disclaimer_html:
         st.markdown(disclaimer_html, unsafe_allow_html=True)
-
-    st.markdown("</div></div>", unsafe_allow_html=True)
 
 
 def render_typing_indicator() -> None:

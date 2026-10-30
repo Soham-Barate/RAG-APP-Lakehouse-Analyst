@@ -152,15 +152,16 @@ def _render_single_source(source: dict[str, Any], index: int) -> None:
 
     # Truncate content for preview
     snippet = content[:320] + "..." if len(content) > 320 else content
-    safe_snippet = html.escape(snippet)
+    safe_snippet = html.escape(snippet).replace("\n", "<br>")
 
     # Metadata chips
     meta_chips = []
-    for key in ["category", "parent_id", "product_id", "order_id", "source_file", "rating"]:
+    for key in ["category", "parent_id", "product_id", "order_id", "source_file", "rating", "dataset_id"]:
         val = metadata.get(key)
         if val is not None:
             meta_chips.append(f'<span class="source-meta-chip">{key}: {html.escape(str(val))}</span>')
     chips_html = "".join(meta_chips)
+    meta_row_html = f'<div class="source-meta-row">{chips_html}</div>' if chips_html else ""
 
     rel_pct = max(0, min(100, int(relevance * 100)))
 
@@ -184,9 +185,7 @@ def _render_single_source(source: dict[str, Any], index: int) -> None:
             <div class="source-content-snippet">
                 {safe_snippet}
             </div>
-            <div class="source-meta-row">
-                {chips_html}
-            </div>
+            {meta_row_html}
         </div>
         """,
         unsafe_allow_html=True,

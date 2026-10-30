@@ -381,6 +381,14 @@ class PgVectorStore(VectorStoreBase):
                 f"AND metadata->>'department' IN ({', '.join(placeholders)})"
             )
 
+        if filters.get("dataset_id"):
+            ds_id = str(filters["dataset_id"])
+            if ds_id == "demo_lakehouse":
+                clauses.append("AND (metadata->>'dataset_id' IS NULL OR metadata->>'dataset_id' = 'demo_lakehouse')")
+            else:
+                params["flt_ds_id"] = ds_id
+                clauses.append("AND metadata->>'dataset_id' = :flt_ds_id")
+
         return " ".join(clauses)
 
     async def close(self) -> None:

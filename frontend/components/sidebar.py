@@ -35,6 +35,50 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
             st.session_state.conversation_id = str(uuid.uuid4())
             st.rerun()
 
+        # Active Dataset Selector
+        st.markdown(
+            '<div class="sidebar-section-header">Active Dataset Target</div>',
+            unsafe_allow_html=True,
+        )
+        try:
+            from frontend.components.dataset_view import fetch_datasets
+            available_datasets = fetch_datasets()
+        except Exception:
+            available_datasets = [{"dataset_id": "demo_lakehouse", "name": "E-Commerce Lakehouse (Demo)", "row_count": 5000, "is_demo": True}]
+
+        dataset_options = {d["dataset_id"]: d.get("name", d["dataset_id"]) for d in available_datasets}
+        current_active = st.session_state.get("active_dataset_id", "demo_lakehouse")
+        if current_active not in dataset_options:
+            current_active = "demo_lakehouse"
+            st.session_state.active_dataset_id = current_active
+
+        keys_list = list(dataset_options.keys())
+        active_index = keys_list.index(current_active) if current_active in keys_list else 0
+
+        selected_id = st.selectbox(
+            "Select active dataset",
+            options=keys_list,
+            format_func=lambda x: dataset_options.get(x, x),
+            index=active_index,
+            label_visibility="collapsed",
+            key="sidebar_dataset_selector",
+        )
+        if selected_id != current_active:
+            st.session_state.active_dataset_id = selected_id
+            st.rerun()
+
+        active_meta = next((d for d in available_datasets if d["dataset_id"] == selected_id), None)
+        active_label = "Demo Lakehouse" if (active_meta and active_meta.get("is_demo")) else "User Dataset"
+        active_rows = active_meta.get("row_count", 0) if active_meta else 0
+        st.markdown(
+            f"""
+            <div style="font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted); margin-top:0.25rem;">
+                Target: <span style="color:#38bdf8;">{active_label}</span> ({active_rows:,} rows)
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         # Dynamic Infrastructure Cluster Health Card
         health = health_info or {}
         gateway_reachable = health.get("reachable", False)
@@ -162,6 +206,7 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
         )
 
         return {
+            "active_dataset_id": selected_id,
             "categories": categories,
             "document_types": doc_types,
             "date_from": str(date_from) if date_from else None,

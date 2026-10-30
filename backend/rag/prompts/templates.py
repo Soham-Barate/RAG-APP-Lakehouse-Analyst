@@ -309,7 +309,8 @@ Table: customers
 1. ONLY produce a single SELECT statement. No INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, ATTACH, or PRAGMA.
 2. Only use the allowlisted tables: `products`, `orders`, `customers`.
 3. Always include LIMIT (maximum 50).
-4. Do not include markdown code block formatting or explanations. Output pure JSON.
+4. Date functions: `order_date` and `join_date` are stored as ISO VARCHAR strings. When using date functions (such as `strftime`, `date_trunc`, `year`, `month`, `extract`), ALWAYS cast explicitly: `CAST(order_date AS TIMESTAMP)` (e.g. `strftime(CAST(o.order_date AS TIMESTAMP), '%Y-%m')` or `date_trunc('month', CAST(o.order_date AS TIMESTAMP))`).
+5. Do not include markdown code block formatting or explanations. Output pure JSON.
 
 User query: {query}
 

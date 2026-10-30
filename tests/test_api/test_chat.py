@@ -50,12 +50,14 @@ def client():
     def get_test_settings():
         return settings
 
-    with patch("config.settings.get_settings", side_effect=get_test_settings):
+    with patch("config.settings.get_settings", new=get_test_settings):
         from backend.main import create_app
         from config.settings import get_settings
+        from backend.api.middleware import auth
 
         app = create_app()
         app.dependency_overrides[get_settings] = get_test_settings
+        app.dependency_overrides[auth.get_settings] = get_test_settings
 
         # Provide mock rag_graph by default so the application is considered initialized
         mock_graph = AsyncMock()
