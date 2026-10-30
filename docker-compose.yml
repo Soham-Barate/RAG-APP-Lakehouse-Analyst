@@ -56,6 +56,8 @@ services:
       APP_PORT: "8000"
     ports:
       - "8000:8000"
+    volumes:
+      - ./data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,6 +97,8 @@ services:
       API_KEY: ${API_KEY:-dev-key-1}
     ports:
       - "8501:8501"
+    volumes:
+      - ./data:/app/data
     depends_on:
       backend:
         condition: service_healthy

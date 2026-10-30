@@ -33,6 +33,7 @@ COPY backend/ backend/
 COPY ingestion/ ingestion/
 COPY evaluation/ evaluation/
 COPY frontend/ frontend/
+COPY data/ data/
 
 # Create data directory
 RUN mkdir -p data logs && chown -R raguser:raguser /app
