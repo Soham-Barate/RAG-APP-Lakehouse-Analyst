@@ -39,9 +39,9 @@ Respond in clear markdown. For data-heavy answers, use tables. Always end with c
 # ===================================================================
 ROUTER_PROMPT = """Classify the following user query into ONE of these categories:
 
-- **sql**: The query asks about structured/quantitative data that would be best answered by querying a database (e.g., "how many orders last month", "top 5 products by revenue", "average order value").
-- **vector**: The query asks about unstructured/qualitative data best found via semantic search (e.g., "find products similar to...", "what do customers say about...", "summarize support issues").
-- **hybrid**: The query combines both structured and unstructured needs, or is ambiguous (default choice).
+- **sql**: The query asks about structured/quantitative tabular data (e.g., "give me the first 5 rows", "show sample rows", "product which occurred many times", "top 5 products by revenue", "how many orders last month", "average order value", "orders breakdown").
+- **vector**: The query asks about unstructured/qualitative text or policies (e.g., "find products similar to...", "what do customers say in reviews about...", "summarize return policy", "support ticket issues").
+- **hybrid**: The query combines both numerical aggregations and text opinions, or is ambiguous.
 
 Query: {query}
 
@@ -316,7 +316,9 @@ Table: customers
 2. Only use the allowlisted tables: `products`, `orders`, `customers`.
 3. Always include LIMIT (maximum 50).
 4. Date functions: `order_date` and `join_date` are stored as ISO VARCHAR strings. When using date functions (such as `strftime`, `date_trunc`, `year`, `month`, `extract`), ALWAYS cast explicitly: `CAST(order_date AS TIMESTAMP)` (e.g. `strftime(CAST(o.order_date AS TIMESTAMP), '%Y-%m')` or `date_trunc('month', CAST(o.order_date AS TIMESTAMP))`).
-5. Do not include markdown code block formatting or explanations. Output pure JSON.
+5. For row inspection ("give me 5 rows", "sample rows", "preview rows"), query `products` or `orders` with `LIMIT 5`.
+6. For frequency / item occurrence questions ("product which occurred many times", "most frequent product", "most ordered product"), query `orders` or `products` with `COUNT(*)` or `SUM(quantity)` grouped by product name/id and sorted descending.
+7. Do not include markdown code block formatting or explanations. Output pure JSON.
 
 User query: {query}
 

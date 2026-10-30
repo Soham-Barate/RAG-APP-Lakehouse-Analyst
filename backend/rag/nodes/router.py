@@ -32,12 +32,29 @@ class QueryRouter:
         meta_phrases = (
             "which dataset", "what dataset", "name it", "dataset name",
             "active dataset", "which database", "what database", "current database",
-            "active table", "which table", "what table", "current table",
             "who are you", "what can you do", "hello", "hi", "help"
         )
-        if any(p in q_lower for p in meta_phrases):
+        if any(p in q_lower for p in meta_phrases) and not any(w in q_lower for w in ("row", "rows", "select", "table", "data", "count", "product", "order")):
             logger.info("Query matched metadata fast-path: %s -> vector", query[:50])
             return {"route": "vector"}
+
+        # Deterministic SQL fast-path: raw row inspection, limits, frequency, aggregates, table queries
+        import re
+        sql_keywords = (
+            "first five", "first 5", "first 10", "first 20", "top 5", "top 10", "top 20",
+            "give me rows", "first rows", "sample rows", "preview rows", "show rows",
+            "first few rows", "sample records", "show records", "first records",
+            "occurred", "occur", "occurrence", "frequency", "most frequent", "most common",
+            "most ordered", "best selling", "top selling", "highest price", "lowest price",
+            "highest rated", "lowest rated", "total revenue", "total orders", "total spent",
+            "average price", "avg price", "average order", "avg order", "how many orders",
+            "how many products", "how many customers", "order count", "customer count",
+            "product count", "orders table", "products table", "customers table",
+            "breakdown by", "group by", "order by"
+        )
+        if any(ind in q_lower for ind in sql_keywords) or re.search(r"\b(first|top|sample|give me|show)\s+(\d+|five|ten|few)\s+(rows?|records?)", q_lower) or re.search(r"\b\d+\s+rows?\b", q_lower):
+            logger.info("Query matched SQL analytical fast-path: %s -> sql", query[:50])
+            return {"route": "sql"}
 
         try:
             prompt = ROUTER_PROMPT.format(query=query)

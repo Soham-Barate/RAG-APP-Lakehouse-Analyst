@@ -126,7 +126,7 @@ class DatasetManager:
             size_bytes=1024 * 1024 * 5,
             row_count=5000,
             column_count=23,
-            table_name="orders",
+            table_name="products, orders, customers",
             created_at=datetime.now(timezone.utc).isoformat(),
             storage_path="data/gold/",
             parquet_path="data/gold/fact_orders.parquet",

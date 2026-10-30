@@ -34,7 +34,7 @@ def fetch_datasets() -> list[dict[str, Any]]:
         "file_format": "parquet",
         "row_count": 5000,
         "column_count": 23,
-        "table_name": "orders",
+        "table_name": "products, orders, customers",
         "is_demo": True,
         "tables": ["orders", "products", "customers"],
         "has_text_indexed": True,
