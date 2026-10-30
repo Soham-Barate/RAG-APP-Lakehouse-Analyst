@@ -175,27 +175,25 @@ def main() -> None:
     status_cls = "healthy" if (gw_reachable and gw_status == "healthy") else ("standby" if gw_reachable else "degraded")
     status_label = "ONLINE" if (gw_reachable and gw_status == "healthy") else ("DEGRADED" if gw_reachable else "OFFLINE")
 
-    st.markdown(
-        f"""
-        <div class="app-header">
-            <div class="app-title-group">
-                <div class="app-badge-row">
-                    <span class="app-version-pill">LAKEHOUSE v2.4</span>
-                    <span class="app-version-pill">DUCKDB + PGVECTOR</span>
-                </div>
-                <h1 class="app-title">RAG Lakehouse Analyst</h1>
-                <p class="app-subtitle">
-                    Dual-Path Enterprise Intelligence: Structured SQL Aggregations & Hybrid Semantic Retrieval
-                </p>
-            </div>
-            <div class="app-status-badge">
-                <span class="status-indicator-dot {status_cls}"></span>
-                <span>GATEWAY {status_label}</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    header_html = (
+        f'<div class="app-header">'
+        f'<div class="app-title-group">'
+        f'<div class="app-badge-row">'
+        f'<span class="app-version-pill">LAKEHOUSE v2.4</span>'
+        f'<span class="app-version-pill">DUCKDB + PGVECTOR</span>'
+        f'</div>'
+        f'<h1 class="app-title">RAG Lakehouse Analyst</h1>'
+        f'<p class="app-subtitle">'
+        f'Dual-Path Enterprise Intelligence: Structured SQL Aggregations & Hybrid Semantic Retrieval'
+        f'</p>'
+        f'</div>'
+        f'<div class="app-status-badge">'
+        f'<span class="status-indicator-dot {status_cls}"></span>'
+        f'<span>GATEWAY {status_label}</span>'
+        f'</div>'
+        f'</div>'
     )
+    st.markdown(header_html, unsafe_allow_html=True)
 
     # Top-Level Segmented Control Navigation
     active_view = st.segmented_control(
@@ -234,20 +232,101 @@ def main() -> None:
 
 def _render_analysis_console(sidebar_config: dict[str, Any]) -> None:
     """Render the primary analytical conversation interface."""
-    # Active Dataset Status Banner
-    active_ds = sidebar_config.get("active_dataset_id", "demo_lakehouse")
-    active_label = "Demo Lakehouse" if active_ds == "demo_lakehouse" else active_ds
-    st.markdown(
-        f"""
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:0.375rem 0.75rem; 
-                    background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); 
-                    margin-bottom:1rem; font-family:var(--font-mono); font-size:0.6875rem;">
-            <span>ACTIVE QUERY TARGET: <strong style="color:#38bdf8;">{html.escape(active_label)}</strong></span>
-            <span style="color:var(--text-muted);">ISOLATION: STRICT READ-ONLY DUCKDB</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    # -------------------------------------------------------------------------
+    # Active Query Target Interactive Bar (Dropdown + New Dataset Creator)
+    # -------------------------------------------------------------------------
+    try:
+        from frontend.components.dataset_view import fetch_datasets
+        available_datasets = fetch_datasets()
+    except Exception:
+        available_datasets = [{"dataset_id": "demo_lakehouse", "name": "E-Commerce Lakehouse (Demo)", "row_count": 50000, "is_demo": True}]
+
+    ds_map = {d["dataset_id"]: d for d in available_datasets}
+    active_ds = st.session_state.get("active_dataset_id", "demo_lakehouse")
+    if active_ds not in ds_map:
+        active_ds = "demo_lakehouse"
+        st.session_state.active_dataset_id = active_ds
+
+    ds_keys = list(ds_map.keys())
+    active_idx = ds_keys.index(active_ds) if active_ds in ds_keys else 0
+
+    target_card = st.container()
+    with target_card:
+        bar_col1, bar_col2, bar_col3 = st.columns([1.5, 3.5, 1.3], vertical_alignment="center")
+
+        with bar_col1:
+            st.markdown(
+                '<div style="font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted); '
+                'text-transform:uppercase; letter-spacing:0.04em; font-weight:600;">'
+                'ACTIVE QUERY TARGET:'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+
+        with bar_col2:
+            def _format_ds_label(ds_id: str) -> str:
+                d = ds_map.get(ds_id, {})
+                name = d.get("name", ds_id)
+                rows = d.get("row_count", 0)
+                tag = "Demo Lakehouse" if d.get("is_demo") else "User Dataset"
+                return f"{name} ({tag} - {rows:,} rows)"
+
+            selected_ds = st.selectbox(
+                "Change active dataset",
+                options=ds_keys,
+                index=active_idx,
+                format_func=_format_ds_label,
+                label_visibility="collapsed",
+                key="console_active_dataset_selector",
+            )
+            if selected_ds != active_ds:
+                st.session_state.active_dataset_id = selected_ds
+                st.rerun()
+
+        with bar_col3:
+            # Inline popover to upload or make a new dataset directly from the console
+            with st.popover("+ New Dataset", use_container_width=True):
+                st.markdown(
+                    '<div style="font-weight:600; font-size:0.875rem; margin-bottom:0.25rem;">Upload New Dataset</div>'
+                    '<div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:0.75rem;">'
+                    'Add CSV, Parquet, Excel, or JSON to analyze with isolated DuckDB SQL & RAG.</div>',
+                    unsafe_allow_html=True,
+                )
+                quick_file = st.file_uploader(
+                    "Upload file",
+                    type=["csv", "xlsx", "xls", "parquet", "json"],
+                    key="quick_console_file_upload",
+                    label_visibility="collapsed",
+                )
+                if quick_file is not None:
+                    if st.button("Ingest & Activate Dataset", type="primary", use_container_width=True, key="btn_quick_ingest"):
+                        with st.spinner("Ingesting, profiling and registering DuckDB table..."):
+                            from frontend.components.dataset_view import upload_file_to_backend
+                            result = upload_file_to_backend(quick_file)
+                            if result.get("success"):
+                                new_id = result["metadata"]["dataset_id"]
+                                st.session_state.active_dataset_id = new_id
+                                st.toast(f"Dataset '{quick_file.name}' ingested and set as active target!")
+                                st.rerun()
+                            else:
+                                st.error(result.get("error", "Upload failed"))
+
+                st.divider()
+                if st.button("Open Full Dataset Manager", use_container_width=True, key="btn_goto_dataset_mgr"):
+                    st.session_state.active_view = "DATASET MANAGER"
+                    st.rerun()
+
+    # Isolation info tag
+    active_item = ds_map.get(active_ds, {})
+    table_tag = active_item.get("table_name", "products, orders, customers")
+    info_html = (
+        f'<div style="display:flex; align-items:center; justify-content:space-between; padding:0.25rem 0.75rem 0.5rem 0.75rem; '
+        f'margin-bottom:0.75rem; border-bottom:1px solid var(--border-subtle); font-family:var(--font-mono); font-size:0.625rem; color:var(--text-muted);">'
+        f'<span>ISOLATED TABLE(S): <strong style="color:var(--text-secondary);">{html.escape(table_tag)}</strong></span>'
+        f'<span>SECURITY: READ-ONLY DUCKDB (NO DDL/DML, NO EXTERNAL ACCESS)</span>'
+        f'</div>'
     )
+    st.markdown(info_html, unsafe_allow_html=True)
 
     # Empty State or Message History
     if not st.session_state.messages:

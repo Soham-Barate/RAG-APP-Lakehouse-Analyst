@@ -78,12 +78,12 @@ WITH vector_results AS (
         content,
         metadata,
         document_type,
-        1 - (embedding <=> :query_embedding::vector) AS vector_score,
-        ROW_NUMBER() OVER (ORDER BY embedding <=> :query_embedding::vector) AS vector_rank
+        1 - (embedding <=> CAST(:query_embedding AS vector)) AS vector_score,
+        ROW_NUMBER() OVER (ORDER BY embedding <=> CAST(:query_embedding AS vector)) AS vector_rank
     FROM documents
     WHERE 1=1
     {filter_clause}
-    ORDER BY embedding <=> :query_embedding::vector
+    ORDER BY embedding <=> CAST(:query_embedding AS vector)
     LIMIT :candidate_limit
 ),
 bm25_results AS (
@@ -218,10 +218,10 @@ class PgVectorStore(VectorStoreBase):
                         text(
                             "INSERT INTO documents "
                             "(id, parent_id, content, embedding, metadata, document_type, category) "
-                            "VALUES (:id, :parent_id, :content, :embedding::vector, "
+                            "VALUES (:id, :parent_id, :content, CAST(:embedding AS vector), "
                             ":metadata, :doc_type, :category) "
                             "ON CONFLICT (id) DO UPDATE SET "
-                            "content = :content, embedding = :embedding::vector, "
+                            "content = :content, embedding = CAST(:embedding AS vector), "
                             "metadata = :metadata"
                         ),
                         {

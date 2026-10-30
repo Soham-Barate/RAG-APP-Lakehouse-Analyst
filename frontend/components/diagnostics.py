@@ -68,25 +68,21 @@ def fetch_usage_payload() -> dict[str, Any]:
 
 def render_diagnostics_hub() -> None:
     """Render the executive Cluster & Telemetry Diagnostics screen."""
-    st.markdown(
-        """
-        <div style="margin-bottom: 1.25rem;">
-            <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">
-                <span class="source-type-pill">SYSTEM OBSERVABILITY</span>
-                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-muted);">
-                    REAL INFRASTRUCTURE TELEMETRY & PROMETHEUS METRICS
-                </span>
-            </div>
-            <h2 style="font-size:1.375rem; font-weight:700; margin:0 0 0.25rem 0; color:var(--text-primary); letter-spacing:-0.02em;">
-                Cluster Telemetry & Diagnostics Hub
-            </h2>
-            <p style="font-size:0.8125rem; color:var(--text-secondary); margin:0;">
-                Real-time node health probes, query volume, semantic cache efficiency, and pipeline runtime governance.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    header_html = (
+        '<div style="margin-bottom: 1.25rem;">'
+        '<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">'
+        '<span class="source-type-pill">SYSTEM OBSERVABILITY</span>'
+        '<span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-muted);">'
+        'REAL INFRASTRUCTURE TELEMETRY & PROMETHEUS METRICS'
+        '</span></div>'
+        '<h2 style="font-size:1.375rem; font-weight:700; margin:0 0 0.25rem 0; color:var(--text-primary); letter-spacing:-0.02em;">'
+        'Cluster Telemetry & Diagnostics Hub'
+        '</h2>'
+        '<p style="font-size:0.8125rem; color:var(--text-secondary); margin:0;">'
+        'Real-time node health probes, query volume, semantic cache efficiency, and pipeline runtime governance.'
+        '</p></div>'
     )
+    st.markdown(header_html, unsafe_allow_html=True)
 
     # 1. Fetch live payloads
     health = fetch_health_payload()
@@ -97,28 +93,22 @@ def render_diagnostics_hub() -> None:
     status_dot = "online" if overall_status == "HEALTHY" else ("standby" if overall_status in ("DEGRADED", "LOCAL") else "offline")
     probe_latency = f"{health.get('probe_latency_ms', 0)} ms"
 
-    st.markdown(
-        f"""
-        <div class="telemetry-banner">
-            <div class="telemetry-banner-group">
-                <span class="infra-node-dot {status_dot}"></span>
-                <div>
-                    <div style="font-size:0.9375rem; font-weight:600; color:var(--text-primary);">
-                        GATEWAY STATUS: {overall_status}
-                    </div>
-                    <div style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono);">
-                        Target Endpoint: {BACKEND_URL} &middot; Probe Latency: {probe_latency}
-                    </div>
-                </div>
-            </div>
-            <div style="display:flex; gap:0.5rem; align-items:center;">
-                <span class="app-version-pill">PROMETHEUS V2</span>
-                <span class="app-version-pill">OPEN-TELEMETRY</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    banner_html = (
+        f'<div class="telemetry-banner">'
+        f'<div class="telemetry-banner-group">'
+        f'<span class="infra-node-dot {status_dot}"></span>'
+        f'<div>'
+        f'<div style="font-size:0.9375rem; font-weight:600; color:var(--text-primary);">'
+        f'GATEWAY STATUS: {overall_status}</div>'
+        f'<div style="font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono);">'
+        f'Target Endpoint: {BACKEND_URL} &middot; Probe Latency: {probe_latency}</div>'
+        f'</div></div>'
+        f'<div style="display:flex; gap:0.5rem; align-items:center;">'
+        f'<span class="app-version-pill">PROMETHEUS V2</span>'
+        f'<span class="app-version-pill">OPEN-TELEMETRY</span>'
+        f'</div></div>'
     )
+    st.markdown(banner_html, unsafe_allow_html=True)
 
     # 3. Infrastructure Node Matrix
     st.markdown(
@@ -193,15 +183,13 @@ def render_diagnostics_hub() -> None:
     )
 
     if "error" in usage:
-        st.markdown(
-            f"""
-            <div class="schema-note-box">
-                <strong>Telemetry Notice:</strong> Gateway metrics endpoint reported: <code>{usage['error']}</code>.<br>
-                When running locally without an active background request stream, Prometheus counters start at zero.
-            </div>
-            """,
-            unsafe_allow_html=True,
+        notice_html = (
+            f'<div class="schema-note-box">'
+            f'<strong>Telemetry Notice:</strong> Gateway metrics endpoint reported: <code>{usage["error"]}</code>.<br>'
+            f'When running locally without an active background request stream, Prometheus counters start at zero.'
+            f'</div>'
         )
+        st.markdown(notice_html, unsafe_allow_html=True)
     else:
         req_count = usage.get("total_requests", 0)
         tok_count = usage.get("total_tokens", 0)
@@ -229,64 +217,48 @@ def render_diagnostics_hub() -> None:
 
     arch_c1, arch_c2 = st.columns(2)
     with arch_c1:
-        st.markdown(
-            """
-            <div class="source-item-card">
-                <div style="font-weight:600; font-size:0.875rem; margin-bottom:0.5rem; color:var(--text-primary);">
-                    Safety & Guardrails Architecture
-                </div>
-                <div style="font-size:0.75rem; color:var(--text-secondary); line-height:1.6;">
-                    <div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">
-                        <span>Prompt Injection Barrier</span>
-                        <span style="color:var(--status-success); font-family:var(--font-mono);">ACTIVE (Regex + Heuristics)</span>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">
-                        <span>DuckDB SQL Token Allowlist</span>
-                        <span style="color:var(--status-success); font-family:var(--font-mono);">ENFORCED (Read-only Ast)</span>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">
-                        <span>Hallucination & Relevance Grader</span>
-                        <span style="color:var(--status-success); font-family:var(--font-mono);">CALIBRATED (LangGraph Grader)</span>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; padding:0.25rem 0;">
-                        <span>Parent-Child Chunk Isolation</span>
-                        <span style="color:var(--status-success); font-family:var(--font-mono);">ISOLATED (parent_id meta)</span>
-                    </div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        card1_html = (
+            '<div class="source-item-card">'
+            '<div style="font-weight:600; font-size:0.875rem; margin-bottom:0.5rem; color:var(--text-primary);">'
+            'Safety & Guardrails Architecture</div>'
+            '<div style="font-size:0.75rem; color:var(--text-secondary); line-height:1.6;">'
+            '<div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">'
+            '<span>Prompt Injection Barrier</span>'
+            '<span style="color:var(--status-success); font-family:var(--font-mono);">ACTIVE (Regex + Heuristics)</span></div>'
+            '<div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">'
+            '<span>DuckDB SQL Token Allowlist</span>'
+            '<span style="color:var(--status-success); font-family:var(--font-mono);">ENFORCED (Read-only Ast)</span></div>'
+            '<div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">'
+            '<span>Hallucination & Relevance Grader</span>'
+            '<span style="color:var(--status-success); font-family:var(--font-mono);">CALIBRATED (LangGraph Grader)</span></div>'
+            '<div style="display:flex; justify-content:space-between; padding:0.25rem 0;">'
+            '<span>Parent-Child Chunk Isolation</span>'
+            '<span style="color:var(--status-success); font-family:var(--font-mono);">ISOLATED (parent_id meta)</span></div>'
+            '</div></div>'
         )
+        st.markdown(card1_html, unsafe_allow_html=True)
 
     with arch_c2:
-        st.markdown(
-            """
-            <div class="source-item-card">
-                <div style="font-weight:600; font-size:0.875rem; margin-bottom:0.5rem; color:var(--text-primary);">
-                    Storage & Retrieval Configuration
-                </div>
-                <div style="font-size:0.75rem; color:var(--text-secondary); line-height:1.6;">
-                    <div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">
-                        <span>Lakehouse Format</span>
-                        <span style="font-family:var(--font-mono); color:var(--text-primary);">Apache Parquet (Local Medallion)</span>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">
-                        <span>Analytical OLAP Engine</span>
-                        <span style="font-family:var(--font-mono); color:var(--text-primary);">DuckDB v1.1.0+</span>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">
-                        <span>Dense Vector Space</span>
-                        <span style="font-family:var(--font-mono); color:var(--text-primary);">1536 Dimensions (Cosine Metric)</span>
-                    </div>
-                    <div style="display:flex; justify-content:space-between; padding:0.25rem 0;">
-                        <span>Rank Fusion Parameter</span>
-                        <span style="font-family:var(--font-mono); color:var(--text-primary);">RRF Constant k = 60</span>
-                    </div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        card2_html = (
+            '<div class="source-item-card">'
+            '<div style="font-weight:600; font-size:0.875rem; margin-bottom:0.5rem; color:var(--text-primary);">'
+            'Storage & Retrieval Configuration</div>'
+            '<div style="font-size:0.75rem; color:var(--text-secondary); line-height:1.6;">'
+            '<div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">'
+            '<span>Lakehouse Format</span>'
+            '<span style="font-family:var(--font-mono); color:var(--text-primary);">Apache Parquet (Local Medallion)</span></div>'
+            '<div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">'
+            '<span>Analytical OLAP Engine</span>'
+            '<span style="font-family:var(--font-mono); color:var(--text-primary);">DuckDB v1.1.0+</span></div>'
+            '<div style="display:flex; justify-content:space-between; padding:0.25rem 0; border-bottom:1px solid var(--border-subtle);">'
+            '<span>Dense Vector Space</span>'
+            '<span style="font-family:var(--font-mono); color:var(--text-primary);">1536 Dimensions (Cosine Metric)</span></div>'
+            '<div style="display:flex; justify-content:space-between; padding:0.25rem 0;">'
+            '<span>Rank Fusion Parameter</span>'
+            '<span style="font-family:var(--font-mono); color:var(--text-primary);">RRF Constant k = 60</span></div>'
+            '</div></div>'
         )
+        st.markdown(card2_html, unsafe_allow_html=True)
 
 
 def _render_node_tile(
@@ -297,21 +269,19 @@ def _render_node_tile(
     detail: str,
 ) -> None:
     """Render an individual node health card."""
-    st.markdown(
-        f"""
-        <div class="node-tile-card">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.375rem;">
-                <span style="font-weight:600; font-size:0.8125rem; color:var(--text-primary);">{name}</span>
-                <span class="infra-node-dot {status_type}"></span>
-            </div>
-            <div style="display:flex; align-items:center; gap:0.375rem; margin-bottom:0.375rem;">
-                <span class="status-badge-inline {status_type}">{status}</span>
-                <span style="font-size:0.6875rem; color:var(--text-muted); font-family:var(--font-mono);">{subtitle}</span>
-            </div>
-            <div style="font-size:0.6875rem; color:var(--text-secondary); line-height:1.4;">
-                {detail}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    tile_html = (
+        f'<div class="node-tile-card">'
+        f'<div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.375rem;">'
+        f'<span style="font-weight:600; font-size:0.8125rem; color:var(--text-primary);">{name}</span>'
+        f'<span class="infra-node-dot {status_type}"></span>'
+        f'</div>'
+        f'<div style="display:flex; align-items:center; gap:0.375rem; margin-bottom:0.375rem;">'
+        f'<span class="status-badge-inline {status_type}">{status}</span>'
+        f'<span style="font-size:0.6875rem; color:var(--text-muted); font-family:var(--font-mono);">{subtitle}</span>'
+        f'</div>'
+        f'<div style="font-size:0.6875rem; color:var(--text-secondary); line-height:1.4;">'
+        f'{detail}'
+        f'</div>'
+        f'</div>'
     )
+    st.markdown(tile_html, unsafe_allow_html=True)

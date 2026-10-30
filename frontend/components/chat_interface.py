@@ -63,13 +63,7 @@ def render_user_message(message: str) -> None:
     """Render an executive user query bubble."""
     safe_msg = html.escape(message).replace("\n", "<br>")
     st.markdown(
-        f"""
-        <div class="message-row-user">
-            <div class="user-bubble">
-                {safe_msg}
-            </div>
-        </div>
-        """,
+        f'<div class="message-row-user"><div class="user-bubble">{safe_msg}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -110,27 +104,25 @@ def render_assistant_message(
     disclaimer_html = ""
     if disclaimer:
         safe_disc = html.escape(disclaimer)
-        disclaimer_html = f"""
-        <div class="assistant-disclaimer">
-            <strong>System Notice:</strong> {safe_disc}
-        </div>
-        """
+        disclaimer_html = (
+            f'<div class="assistant-disclaimer">'
+            f'<strong>System Notice:</strong> {safe_disc}'
+            f'</div>'
+        )
 
-    st.markdown(
-        f"""
-        <div class="assistant-header-bar">
-            <div class="assistant-title-group">
-                <div class="assistant-icon-box">{SVG_BOT}</div>
-                <span class="assistant-name">Lakehouse Analyst</span>
-                {route_html}
-            </div>
-            <div class="header-badges-right">
-                <span class="confidence-pill {conf_class}">{conf_label}</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    header_html = (
+        f'<div class="assistant-header-bar">'
+        f'<div class="assistant-title-group">'
+        f'<div class="assistant-icon-box">{SVG_BOT}</div>'
+        f'<span class="assistant-name">Lakehouse Analyst</span>'
+        f'{route_html}'
+        f'</div>'
+        f'<div class="header-badges-right">'
+        f'<span class="confidence-pill {conf_class}">{conf_label}</span>'
+        f'</div>'
+        f'</div>'
     )
+    st.markdown(header_html, unsafe_allow_html=True)
 
     # Render message markdown natively inside Streamlit for math and code formatting
     st.markdown(message)
@@ -142,12 +134,10 @@ def render_assistant_message(
 def render_typing_indicator() -> None:
     """Render a subtle, linear-style pulse loading indicator."""
     st.markdown(
-        """
-        <div class="skeleton-loader-bar">
-            <div class="skeleton-pulse-ring"></div>
-            <span class="skeleton-text">Executing RAG lakehouse pipeline...</span>
-        </div>
-        """,
+        '<div class="skeleton-loader-bar">'
+        '<div class="skeleton-pulse-ring"></div>'
+        '<span class="skeleton-text">Executing RAG lakehouse pipeline...</span>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
@@ -163,28 +153,16 @@ def render_metrics_panel(metrics: dict[str, Any]) -> None:
     cache_badge = "HIT" if cache_hit else "MISS"
     cache_color = "var(--status-success)" if cache_hit else "var(--text-muted)"
 
-    st.markdown(
-        f"""
-        <div class="metrics-ribbon">
-            <span class="metric-pill-item">
-                Latency: <strong>{latency:.0f}ms</strong>
-            </span>
-            <span class="metric-pill-item">
-                Tokens: <strong>{tokens:,}</strong>
-            </span>
-            <span class="metric-pill-item">
-                Retrieved: <strong>{docs_retrieved} docs</strong>
-            </span>
-            <span class="metric-pill-item">
-                After Rerank: <strong>{docs_reranked}</strong>
-            </span>
-            <span class="metric-pill-item">
-                Semantic Cache: <strong style="color:{cache_color};">{cache_badge}</strong>
-            </span>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    metrics_html = (
+        f'<div class="metrics-ribbon">'
+        f'<span class="metric-pill-item">Latency: <strong>{latency:.0f}ms</strong></span>'
+        f'<span class="metric-pill-item">Tokens: <strong>{tokens:,}</strong></span>'
+        f'<span class="metric-pill-item">Retrieved: <strong>{docs_retrieved} docs</strong></span>'
+        f'<span class="metric-pill-item">After Rerank: <strong>{docs_reranked}</strong></span>'
+        f'<span class="metric-pill-item">Semantic Cache: <strong style="color:{cache_color};">{cache_badge}</strong></span>'
+        f'</div>'
     )
+    st.markdown(metrics_html, unsafe_allow_html=True)
 
 
 def render_starter_prompts() -> str | None:
@@ -220,13 +198,10 @@ def render_starter_prompts() -> str | None:
     ]
 
     st.markdown(
-        """
-        <div class="starter-headline">
-            <span style="font-size:0.75rem; font-family:var(--font-mono); color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;">
-                Quick Analytical Directives
-            </span>
-        </div>
-        """,
+        '<div class="starter-headline">'
+        '<span style="font-size:0.75rem; font-family:var(--font-mono); color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;">'
+        'Quick Analytical Directives'
+        '</span></div>',
         unsafe_allow_html=True,
     )
 

@@ -242,12 +242,12 @@ def _grader_decision(state: RAGState) -> str:
       - fast_mode → go directly to generator
       - normal mode → think first (chain-of-thought)
     If not and retries remain → loop back to query_rewriter.
-    If max retries reached → force generation with what we have.
+    If max retries reached or in fast_mode → force generation with what we have.
     """
     should_retry = state.get("should_retry", False)
+    iteration = state.get("iteration_count", 0)
 
-    if should_retry:
-        iteration = state.get("iteration_count", 1)
+    if should_retry and iteration < 2 and not state.get("fast_mode", False):
         logger.info(
             "Grader: retrieval insufficient, retrying (iteration %d)",
             iteration,

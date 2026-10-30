@@ -98,24 +98,22 @@ def delete_dataset(dataset_id: str) -> tuple[bool, str]:
 
 def render_dataset_manager() -> None:
     """Render the primary Dataset Manager view in Streamlit."""
-    st.markdown(
-        """
-        <div style="margin-bottom:1.5rem;">
-            <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">
-                <span class="app-version-pill">STORAGE ENGINE</span>
-                <span class="app-version-pill">DUCKDB + PARQUET</span>
-            </div>
-            <h2 style="font-size:1.25rem; font-weight:600; color:var(--text-primary); margin:0 0 0.25rem 0;">
-                Lakehouse Dataset Manager & Automated Profiler
-            </h2>
-            <p style="font-size:0.8125rem; color:var(--text-secondary); margin:0;">
-                Upload real-world tabular data (CSV, XLSX, Parquet, JSON), inspect data quality distribution metrics,
-                and switch the active query target with complete schema isolation.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    banner_html = (
+        '<div style="margin-bottom:1.5rem;">'
+        '<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">'
+        '<span class="app-version-pill">STORAGE ENGINE</span>'
+        '<span class="app-version-pill">DUCKDB + PARQUET</span>'
+        '</div>'
+        '<h2 style="font-size:1.25rem; font-weight:600; color:var(--text-primary); margin:0 0 0.25rem 0;">'
+        'Lakehouse Dataset Manager & Automated Profiler'
+        '</h2>'
+        '<p style="font-size:0.8125rem; color:var(--text-secondary); margin:0;">'
+        'Upload real-world tabular data (CSV, XLSX, Parquet, JSON), inspect data quality distribution metrics, '
+        'and switch the active query target with complete schema isolation.'
+        '</p>'
+        '</div>'
     )
+    st.markdown(banner_html, unsafe_allow_html=True)
 
     datasets = fetch_datasets()
     active_id = st.session_state.get("active_dataset_id", "demo_lakehouse")
@@ -198,21 +196,19 @@ def render_dataset_manager() -> None:
                         else '<span class="tier-badge tier-silver">USER DATASET</span>'
                     )
 
-                    st.markdown(
-                        f"""
-                        <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">
-                            {type_badge} {status_badge}
-                        </div>
-                        <div style="font-weight:600; font-size:0.875rem; color:var(--text-primary);">
-                            {html.escape(ds.get("name", ds_id))}
-                        </div>
-                        <div style="font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted); margin-top:0.25rem;">
-                            Table: <code>{html.escape(ds.get("table_name", "orders"))}</code> &bull;
-                            Rows: {ds.get("row_count", 0):,} &bull; Cols: {ds.get("column_count", 0)}
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
+                    card_text = (
+                        f'<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">'
+                        f'{type_badge} {status_badge}'
+                        f'</div>'
+                        f'<div style="font-weight:600; font-size:0.875rem; color:var(--text-primary);">'
+                        f'{html.escape(ds.get("name", ds_id))}'
+                        f'</div>'
+                        f'<div style="font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted); margin-top:0.25rem;">'
+                        f'Table: <code>{html.escape(ds.get("table_name", "orders"))}</code> &bull; '
+                        f'Rows: {ds.get("row_count", 0):,} &bull; Cols: {ds.get("column_count", 0)}'
+                        f'</div>'
                     )
+                    st.markdown(card_text, unsafe_allow_html=True)
 
                 with c2:
                     if not is_active:
@@ -247,33 +243,31 @@ def render_dataset_manager() -> None:
         preview_rows = detail.get("preview", [])
 
         # Active Dataset Summary Card
-        st.markdown(
-            f"""
-            <div class="dataset-meta-banner">
-                <div class="dataset-meta-item">
-                    <span class="dataset-meta-label">Active Target</span>
-                    <span class="dataset-meta-value">{html.escape(meta.get("name", "Demo"))}</span>
-                </div>
-                <div class="dataset-meta-item">
-                    <span class="dataset-meta-label">Total Rows</span>
-                    <span class="dataset-meta-value">{meta.get("row_count", 0):,}</span>
-                </div>
-                <div class="dataset-meta-item">
-                    <span class="dataset-meta-label">Columns</span>
-                    <span class="dataset-meta-value">{meta.get("column_count", 0)}</span>
-                </div>
-                <div class="dataset-meta-item">
-                    <span class="dataset-meta-label">Duplicate Rows</span>
-                    <span class="dataset-meta-value">{profile.get("duplicate_rows", 0):,} ({profile.get("duplicate_pct", 0.0)}%)</span>
-                </div>
-                <div class="dataset-meta-item">
-                    <span class="dataset-meta-label">Missing Cells</span>
-                    <span class="dataset-meta-value">{profile.get("missing_cells_pct", 0.0)}%</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        banner_summary_html = (
+            f'<div class="dataset-meta-banner">'
+            f'<div class="dataset-meta-item">'
+            f'<span class="dataset-meta-label">Active Target</span>'
+            f'<span class="dataset-meta-value">{html.escape(meta.get("name", "Demo"))}</span>'
+            f'</div>'
+            f'<div class="dataset-meta-item">'
+            f'<span class="dataset-meta-label">Total Rows</span>'
+            f'<span class="dataset-meta-value">{meta.get("row_count", 0):,}</span>'
+            f'</div>'
+            f'<div class="dataset-meta-item">'
+            f'<span class="dataset-meta-label">Columns</span>'
+            f'<span class="dataset-meta-value">{meta.get("column_count", 0)}</span>'
+            f'</div>'
+            f'<div class="dataset-meta-item">'
+            f'<span class="dataset-meta-label">Duplicate Rows</span>'
+            f'<span class="dataset-meta-value">{profile.get("duplicate_rows", 0):,} ({profile.get("duplicate_pct", 0.0)}%)</span>'
+            f'</div>'
+            f'<div class="dataset-meta-item">'
+            f'<span class="dataset-meta-label">Missing Cells</span>'
+            f'<span class="dataset-meta-value">{profile.get("missing_cells_pct", 0.0)}%</span>'
+            f'</div>'
+            f'</div>'
         )
+        st.markdown(banner_summary_html, unsafe_allow_html=True)
 
         # Quality Warnings
         warnings = profile.get("warnings", [])

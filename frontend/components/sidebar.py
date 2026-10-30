@@ -46,22 +46,23 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     with st.sidebar:
         # App Title & Brand
-        st.markdown(
-            """
-            <div class="sidebar-brand-box">
-                <div class="sidebar-title">RAG LAKEHOUSE ANALYST</div>
-                <div class="sidebar-subtitle">PRODUCTION ENTERPRISE EDITION</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        brand_html = (
+            '<div class="sidebar-brand-box">'
+            '<div class="sidebar-title">RAG LAKEHOUSE ANALYST</div>'
+            '<div class="sidebar-subtitle">PRODUCTION ENTERPRISE EDITION</div>'
+            '</div>'
         )
+        st.markdown(brand_html, unsafe_allow_html=True)
 
         # New Analysis Thread Button (Regenerates fresh dataset and resets thread)
         if st.button("New Analysis Thread", use_container_width=True, type="primary"):
-            _trigger_data_regeneration()
+            with st.spinner("Regenerating lakehouse transactions..."):
+                _trigger_data_regeneration()
             st.session_state.messages = []
             st.session_state.conversation_id = str(uuid.uuid4())
+            st.session_state.active_dataset_id = "demo_lakehouse"
             st.session_state.active_view = "ANALYSIS CONSOLE"
+            st.toast("Fresh lakehouse data generated!")
             st.rerun()
 
         # Active Dataset Selector
@@ -99,14 +100,12 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
         active_meta = next((d for d in available_datasets if d["dataset_id"] == selected_id), None)
         active_label = "Demo Lakehouse" if (active_meta and active_meta.get("is_demo")) else "User Dataset"
         active_rows = active_meta.get("row_count", 0) if active_meta else 0
-        st.markdown(
-            f"""
-            <div style="font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted); margin-top:0.25rem;">
-                Target: <span style="color:#38bdf8;">{active_label}</span> ({active_rows:,} rows)
-            </div>
-            """,
-            unsafe_allow_html=True,
+        target_html = (
+            f'<div style="font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted); margin-top:0.25rem;">'
+            f'Target: <span style="color:#38bdf8;">{active_label}</span> ({active_rows:,} rows)'
+            f'</div>'
         )
+        st.markdown(target_html, unsafe_allow_html=True)
 
         # Dynamic Infrastructure Cluster Health Card
         health = health_info or {}
@@ -129,29 +128,27 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
             unsafe_allow_html=True,
         )
 
-        st.markdown(
-            f"""
-            <div class="infra-health-card">
-                <div class="infra-node-item">
-                    <span><span class="infra-node-dot {gw_dot}"></span>FastAPI Gateway</span>
-                    <span style="color:var(--text-muted); font-size:0.6875rem;">{gw_label}</span>
-                </div>
-                <div class="infra-node-item">
-                    <span><span class="infra-node-dot online"></span>DuckDB Analytical OLAP</span>
-                    <span style="color:var(--text-muted); font-size:0.6875rem;">READY</span>
-                </div>
-                <div class="infra-node-item">
-                    <span><span class="infra-node-dot {pg_dot}"></span>PostgreSQL pgvector</span>
-                    <span style="color:var(--text-muted); font-size:0.6875rem;">{pg_label}</span>
-                </div>
-                <div class="infra-node-item">
-                    <span><span class="infra-node-dot {rd_dot}"></span>Redis Semantic Cache</span>
-                    <span style="color:var(--text-muted); font-size:0.6875rem;">{rd_label}</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        infra_html = (
+            f'<div class="infra-health-card">'
+            f'<div class="infra-node-item">'
+            f'<span><span class="infra-node-dot {gw_dot}"></span>FastAPI Gateway</span>'
+            f'<span style="color:var(--text-muted); font-size:0.6875rem;">{gw_label}</span>'
+            f'</div>'
+            f'<div class="infra-node-item">'
+            f'<span><span class="infra-node-dot online"></span>DuckDB Analytical OLAP</span>'
+            f'<span style="color:var(--text-muted); font-size:0.6875rem;">READY</span>'
+            f'</div>'
+            f'<div class="infra-node-item">'
+            f'<span><span class="infra-node-dot {pg_dot}"></span>PostgreSQL pgvector</span>'
+            f'<span style="color:var(--text-muted); font-size:0.6875rem;">{pg_label}</span>'
+            f'</div>'
+            f'<div class="infra-node-item">'
+            f'<span><span class="infra-node-dot {rd_dot}"></span>Redis Semantic Cache</span>'
+            f'<span style="color:var(--text-muted); font-size:0.6875rem;">{rd_label}</span>'
+            f'</div>'
+            f'</div>'
         )
+        st.markdown(infra_html, unsafe_allow_html=True)
 
         # Filters Section
         st.markdown(
@@ -223,34 +220,32 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
         short_id = conv_id[:8] if conv_id else "none"
         msg_count = len(st.session_state.get("messages", []))
 
-        st.markdown(
-            f"""
-            <div style="margin-top:1.25rem; padding-top:0.75rem; border-top:1px solid var(--border-subtle);
-                        font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted); display:flex; justify-content:space-between;">
-                <span>Session: {short_id}</span>
-                <span>Queries: {msg_count}</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        session_html = (
+            f'<div style="margin-top:1.25rem; padding-top:0.75rem; border-top:1px solid var(--border-subtle); '
+            f'font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted); display:flex; justify-content:space-between;">'
+            f'<span>Session: {short_id}</span>'
+            f'<span>Queries: {msg_count}</span>'
+            f'</div>'
         )
+        st.markdown(session_html, unsafe_allow_html=True)
 
         # Quick Lakehouse Data Controls at Bottom of Panel
         st.markdown(
-            '<div class="sidebar-section-header" style="margin-top:0.75rem;">Lakehouse Data Controls</div>',
+            '<div class="sidebar-section-header" style="margin-top:1rem;">Lakehouse Data Controls</div>',
             unsafe_allow_html=True,
         )
 
         col_side1, col_side2 = st.columns(2)
         with col_side1:
-            if st.button("View Lakehouse Data", use_container_width=True, key="btn_view_lakehouse_data", help="Inspect newly generated or active lakehouse tables"):
+            if st.button("View Generated Data", use_container_width=True, key="btn_view_lakehouse_data", help="Inspect newly generated or active lakehouse tables in Lakehouse Table Explorer"):
                 st.session_state.active_view = "LAKEHOUSE TABLE EXPLORER"
                 st.rerun()
 
         with col_side2:
             if st.button("Regenerate Data", use_container_width=True, key="btn_regen_lakehouse_data", help="Generate fresh synthetic orders, revenue, and customer records"):
-                with st.spinner("Regenerating..."):
+                with st.spinner("Generating fresh transactions..."):
                     _trigger_data_regeneration()
-                st.toast("Fresh lakehouse transactions generated!")
+                st.toast("Fresh lakehouse transactions generated and reloaded!")
                 st.rerun()
 
         return {

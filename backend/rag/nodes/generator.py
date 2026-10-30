@@ -49,9 +49,22 @@ class ResponseGenerator:
 
         history = self._format_history(state.get("messages", []))
 
+        dataset_id = state.get("dataset_id") or "demo_lakehouse"
+        dataset_label = (
+            "E-Commerce Lakehouse (Demo: products, orders, customers)"
+            if dataset_id == "demo_lakehouse"
+            else f"User Uploaded Dataset '{dataset_id}'"
+        )
+        context_with_scope = (
+            f"### Active Query Target\n"
+            f"- Active Dataset: **{dataset_label}**\n"
+            f"- Dataset Identifier: `{dataset_id}`\n\n"
+            f"{context}"
+        )
+
         # Build the generation prompt
         prompt = GENERATOR_PROMPT.format(
-            context=context,
+            context=context_with_scope,
             history=history,
             query=query,
         )

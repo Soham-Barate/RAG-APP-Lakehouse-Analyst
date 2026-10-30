@@ -23,11 +23,13 @@ def render_sources(
     Render both structured lakehouse SQL evidence and unstructured vector citations.
     """
     has_sql = bool(sql_query or (sql_results and len(sql_results) > 0) or sql_error)
-    # Only genuine vector chunks (filter out synthetic SQL documents)
+    # Only genuine vector chunks (filter out synthetic SQL documents and SQL error notices)
     real_sources = [
         s for s in (sources or [])
-        if not str(s.get("document_id", "")).startswith("lakehouse_sql_")
+        if not str(s.get("document_id", "")).lower().startswith("lakehouse_sql_")
+        and not str(s.get("id", "")).lower().startswith("lakehouse_sql_")
         and s.get("document_type") != "lakehouse_analytics"
+        and s.get("metadata", {}).get("document_type") != "lakehouse_analytics"
     ]
     has_vector = bool(len(real_sources) > 0)
 
@@ -137,28 +139,22 @@ def _render_vector_citations(sources: list[dict[str, Any]]) -> None:
             _render_single_source(source, i + 1)
 
         # Mathematical RRF Explainer Note (ckw-design §7: show equation & annotate terms)
-        st.markdown(
-            """
-            <div class="formula-callout">
-                <div style="font-weight:600; margin-bottom:0.375rem; color:var(--text-secondary); font-size:0.8125rem;">
-                    Hybrid Retrieval & Reciprocal Rank Fusion (RRF) Mathematical Spec
-                </div>
-                <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.375rem;">
-                    Dense semantic vectors (pgvector cosine) and sparse lexical keywords (PostgreSQL tsvector BM25) are fused without scale bias:
-                </div>
-                <div style="margin:0.5rem 0; font-family:var(--font-mono); font-size:0.875rem; color:var(--accent-primary); letter-spacing:0.02em;">
-                    RRF(d) = &sum;<sub>m &isin; M</sub> [ 1 / (k + rank<sub>m</sub>(d)) ]
-                </div>
-                <div style="font-size:0.6875rem; color:var(--text-muted); line-height:1.6; border-top:1px solid var(--border-subtle); padding-top:0.375rem;">
-                    <div>&bull; <code>M</code> &isin; {Dense pgvector, Sparse BM25}: Independent retrieval model rankers</div>
-                    <div>&bull; <code>rank<sub>m</sub>(d)</code>: 1-indexed rank position of document <code>d</code> within retrieval model <code>m</code></div>
-                    <div>&bull; <code>k = 60</code>: Smoothing constant dampening outlier impact from single-channel dominance</div>
-                    <div>&bull; <strong>Decision Rule:</strong> Top <code>N</code> fused candidate documents are passed to Cross-Encoder reranking.</div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        rrf_html = (
+            '<div class="formula-callout">'
+            '<div style="font-weight:600; margin-bottom:0.375rem; color:var(--text-secondary); font-size:0.8125rem;">'
+            'Hybrid Retrieval & Reciprocal Rank Fusion (RRF) Mathematical Spec</div>'
+            '<div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.375rem;">'
+            'Dense semantic vectors (pgvector cosine) and sparse lexical keywords (PostgreSQL tsvector BM25) are fused without scale bias:</div>'
+            '<div style="margin:0.5rem 0; font-family:var(--font-mono); font-size:0.875rem; color:var(--accent-primary); letter-spacing:0.02em;">'
+            'RRF(d) = &sum;<sub>m &isin; M</sub> [ 1 / (k + rank<sub>m</sub>(d)) ]</div>'
+            '<div style="font-size:0.6875rem; color:var(--text-muted); line-height:1.6; border-top:1px solid var(--border-subtle); padding-top:0.375rem;">'
+            '<div>&bull; <code>M</code> &isin; {Dense pgvector, Sparse BM25}: Independent retrieval model rankers</div>'
+            '<div>&bull; <code>rank<sub>m</sub>(d)</code>: 1-indexed rank position of document <code>d</code> within retrieval model <code>m</code></div>'
+            '<div>&bull; <code>k = 60</code>: Smoothing constant dampening outlier impact from single-channel dominance</div>'
+            '<div>&bull; <strong>Decision Rule:</strong> Top <code>N</code> fused candidate documents are passed to Cross-Encoder reranking.</div>'
+            '</div></div>'
         )
+        st.markdown(rrf_html, unsafe_allow_html=True)
 
 
 def _render_single_source(source: dict[str, Any], index: int) -> None:

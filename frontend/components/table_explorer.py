@@ -249,25 +249,21 @@ def load_dataset_metadata(dataset_key: str, path_str: str, mtime: float = 0.0) -
 
 def render_table_explorer() -> None:
     """Render the executive Lakehouse Table Explorer screen."""
-    st.markdown(
-        """
-        <div style="margin-bottom: 1.25rem;">
-            <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">
-                <span class="source-type-pill">MEDALLION CATALOG</span>
-                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-muted);">
-                    DUCKDB IN-MEMORY ZERO-COPY INSPECTION
-                </span>
-            </div>
-            <h2 style="font-size:1.375rem; font-weight:700; margin:0 0 0.25rem 0; color:var(--text-primary); letter-spacing:-0.02em;">
-                Lakehouse Table & Schema Explorer
-            </h2>
-            <p style="font-size:0.8125rem; color:var(--text-secondary); margin:0;">
-                Direct schema validation, column-level data dictionaries, row sampling, and zero-copy OLAP analytical querying.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    header_html = (
+        '<div style="margin-bottom: 1.25rem;">'
+        '<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.25rem;">'
+        '<span class="source-type-pill">MEDALLION CATALOG</span>'
+        '<span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-muted);">'
+        'DUCKDB IN-MEMORY ZERO-COPY INSPECTION'
+        '</span></div>'
+        '<h2 style="font-size:1.375rem; font-weight:700; margin:0 0 0.25rem 0; color:var(--text-primary); letter-spacing:-0.02em;">'
+        'Lakehouse Table & Schema Explorer'
+        '</h2>'
+        '<p style="font-size:0.8125rem; color:var(--text-secondary); margin:0;">'
+        'Direct schema validation, column-level data dictionaries, row sampling, and zero-copy OLAP analytical querying.'
+        '</p></div>'
     )
+    st.markdown(header_html, unsafe_allow_html=True)
 
     # Dataset Selection Ribbon (combines Medallion lakehouse tables and user-uploaded datasets)
     catalog = dict(DATASET_CATALOG)
@@ -318,33 +314,31 @@ def render_table_explorer() -> None:
         col_str = str(meta.get("col_count", 0))
         size_str = meta.get("size", "N/A")
 
-        st.markdown(
-            f"""
-            <div class="dataset-meta-banner">
-                <div class="dataset-meta-item">
-                    <span class="dataset-meta-label">MEDALLION TIER</span>
-                    <span class="tier-badge {tier_cls}">{dataset_def['tier']}</span>
-                </div>
-                <div class="dataset-meta-item">
-                    <span class="dataset-meta-label">TOTAL ROWS</span>
-                    <span class="dataset-meta-value">{row_str}</span>
-                </div>
-                <div class="dataset-meta-item">
-                    <span class="dataset-meta-label">COLUMNS</span>
-                    <span class="dataset-meta-value">{col_str}</span>
-                </div>
-                <div class="dataset-meta-item">
-                    <span class="dataset-meta-label">STORAGE SIZE</span>
-                    <span class="dataset-meta-value">{size_str}</span>
-                </div>
-                <div class="dataset-meta-item">
-                    <span class="dataset-meta-label">STORAGE FORMAT</span>
-                    <span class="dataset-meta-value">{dataset_def['format']}</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        banner_html = (
+            f'<div class="dataset-meta-banner">'
+            f'<div class="dataset-meta-item">'
+            f'<span class="dataset-meta-label">MEDALLION TIER</span>'
+            f'<span class="tier-badge {tier_cls}">{dataset_def["tier"]}</span>'
+            f'</div>'
+            f'<div class="dataset-meta-item">'
+            f'<span class="dataset-meta-label">TOTAL ROWS</span>'
+            f'<span class="dataset-meta-value">{row_str}</span>'
+            f'</div>'
+            f'<div class="dataset-meta-item">'
+            f'<span class="dataset-meta-label">COLUMNS</span>'
+            f'<span class="dataset-meta-value">{col_str}</span>'
+            f'</div>'
+            f'<div class="dataset-meta-item">'
+            f'<span class="dataset-meta-label">STORAGE SIZE</span>'
+            f'<span class="dataset-meta-value">{size_str}</span>'
+            f'</div>'
+            f'<div class="dataset-meta-item">'
+            f'<span class="dataset-meta-label">STORAGE FORMAT</span>'
+            f'<span class="dataset-meta-value">{dataset_def["format"]}</span>'
+            f'</div>'
+            f'</div>'
         )
+        st.markdown(banner_html, unsafe_allow_html=True)
 
     st.markdown(
         f'<div style="font-size:0.8125rem; color:var(--text-secondary); margin-bottom:1.25rem;">'
@@ -444,16 +438,14 @@ def render_table_explorer() -> None:
                 hide_index=True,
             )
 
-            st.markdown(
-                """
-                <div class="schema-note-box">
-                    <strong>Schema Governance Note:</strong>
-                    All parquet tables conform to the Iceberg Lakehouse specification with strict decimal precision and UTF-8 encoding.
-                    Column names adhere to <code>snake_case</code> conventions and enforce strict typing during the bronze-to-silver ETL boundary.
-                </div>
-                """,
-                unsafe_allow_html=True,
+            note_html = (
+                '<div class="schema-note-box">'
+                '<strong>Schema Governance Note:</strong> '
+                'All parquet tables conform to the Iceberg Lakehouse specification with strict decimal precision and UTF-8 encoding. '
+                'Column names adhere to <code>snake_case</code> conventions and enforce strict typing during the bronze-to-silver ETL boundary.'
+                '</div>'
             )
+            st.markdown(note_html, unsafe_allow_html=True)
         else:
             st.info("Schema details could not be parsed for this file.")
 

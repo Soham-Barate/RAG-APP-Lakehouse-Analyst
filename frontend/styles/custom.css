@@ -69,15 +69,19 @@ p, label, input, button, select, textarea {
     font-family: var(--font-sans);
 }
 
-/* Ensure Material Symbols ligatures are handled cleanly */
+/* Ensure Material Symbols ligatures are handled cleanly across all Streamlit UI components */
 [data-testid="stIconMaterial"],
-.material-symbols-rounded,
-.material-symbols-outlined,
-.material-icons,
+[data-testid="stIconMaterial"] *,
 [class*="material-symbols"],
-[class*="material-icons"] {
-    font-family: 'Material Symbols Rounded', 'Material Icons' !important;
-    font-weight: normal !important;
+[class*="material-icons"],
+button[data-testid="stSidebarCollapseButton"] *,
+[data-testid="stSidebarHeader"] button *,
+[data-testid="stExpander"] summary [data-testid="stIconMaterial"],
+[data-testid="stExpander"] summary svg,
+[data-testid="stExpander"] summary span:first-child,
+[data-testid="stExpanderToggleIcon"] {
+    font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
+    font-weight: 400 !important;
     font-style: normal !important;
     line-height: 1 !important;
     letter-spacing: normal !important;
@@ -98,7 +102,6 @@ p, label, input, button, select, textarea {
 }
 
 [data-testid="stExpander"] summary {
-    font-family: var(--font-sans) !important;
     font-size: 0.75rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.03em !important;
@@ -106,7 +109,9 @@ p, label, input, button, select, textarea {
     padding: 0.5rem 0.75rem !important;
 }
 
-[data-testid="stExpander"] summary p {
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span:not([data-testid="stIconMaterial"]):not(:first-child) {
+    font-family: var(--font-sans) !important;
     font-size: 0.75rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.03em !important;
