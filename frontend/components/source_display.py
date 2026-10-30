@@ -6,6 +6,7 @@ Follows Linear-grade data layout, automatic chart synthesis, and ckw-design algo
 from __future__ import annotations
 
 import html
+import re
 from typing import Any
 
 import pandas as pd
@@ -16,33 +17,51 @@ def render_sources(
     sources: list[dict[str, Any]] | None = None,
     sql_query: str | None = None,
     sql_results: list[dict[str, Any]] | None = None,
+    sql_error: str | None = None,
 ) -> None:
     """
     Render both structured lakehouse SQL evidence and unstructured vector citations.
     """
-    has_sql = bool(sql_query or (sql_results and len(sql_results) > 0))
-    has_vector = bool(sources and len(sources) > 0)
+    has_sql = bool(sql_query or (sql_results and len(sql_results) > 0) or sql_error)
+    # Only genuine vector chunks (filter out synthetic SQL documents)
+    real_sources = [
+        s for s in (sources or [])
+        if not str(s.get("document_id", "")).startswith("lakehouse_sql_")
+        and s.get("document_type") != "lakehouse_analytics"
+    ]
+    has_vector = bool(len(real_sources) > 0)
 
     if not has_sql and not has_vector:
         return
 
     # 1. Structured Lakehouse Evidence (DuckDB / SQL)
     if has_sql:
-        _render_sql_evidence(sql_query, sql_results)
+        _render_sql_evidence(sql_query, sql_results, sql_error)
 
     # 2. Unstructured Retrieval Citations (pgvector / BM25)
     if has_vector:
-        _render_vector_citations(sources or [])
+        _render_vector_citations(real_sources)
 
 
 def _render_sql_evidence(
     sql_query: str | None,
     sql_results: list[dict[str, Any]] | None,
+    sql_error: str | None = None,
 ) -> None:
     """Render DuckDB SQL query execution, visualization, and tabular analytical results."""
     row_count = len(sql_results) if sql_results else 0
+    status_label = f"{row_count} rows returned" if not sql_error else "execution notice"
 
-    with st.expander(f"STRUCTURED LAKEHOUSE EVIDENCE ({row_count} rows returned)", expanded=False):
+    with st.expander(f"STRUCTURED LAKEHOUSE EVIDENCE ({status_label})", expanded=bool(row_count > 0)):
+        if sql_error:
+            st.markdown(
+                f'<div style="padding:0.625rem 0.875rem; background:rgba(239,68,68,0.1); '
+                f'border:1px solid rgba(239,68,68,0.25); border-radius:var(--radius-sm); '
+                f'font-size:0.75rem; color:#fca5a5; margin-bottom:0.75rem;">'
+                f'<strong>Execution Notice:</strong> {html.escape(sql_error)}</div>',
+                unsafe_allow_html=True,
+            )
+
         if sql_query:
             st.markdown(
                 '<div style="font-size:0.6875rem; font-family:var(--font-mono); '
@@ -74,7 +93,7 @@ def _render_sql_evidence(
                 mime="text/csv",
                 key=f"dl_sql_{hash(sql_query or '')}_{len(df)}",
             )
-        elif sql_query:
+        elif sql_query and not sql_error:
             st.markdown(
                 '<div style="font-size:0.75rem; color:var(--text-muted); font-style:italic;">'
                 'Query executed successfully with zero rows returned.</div>',
@@ -150,8 +169,10 @@ def _render_single_source(source: dict[str, Any], index: int) -> None:
     metadata = source.get("metadata", {})
     doc_id = str(source.get("document_id", f"doc_{index}"))
 
-    # Truncate content for preview
-    snippet = content[:320] + "..." if len(content) > 320 else content
+    # Truncate and clean content for preview (remove markdown headers or fences that break HTML)
+    clean_text = re.sub(r"^#+\s*", "", content, flags=re.MULTILINE)
+    clean_text = re.sub(r"```[a-z]*", "", clean_text).strip()
+    snippet = clean_text[:320] + "..." if len(clean_text) > 320 else clean_text
     safe_snippet = html.escape(snippet).replace("\n", "<br>")
 
     # Metadata chips
@@ -165,28 +186,21 @@ def _render_single_source(source: dict[str, Any], index: int) -> None:
 
     rel_pct = max(0, min(100, int(relevance * 100)))
 
-    st.markdown(
-        f"""
-        <div class="source-item-card">
-            <div class="source-item-header">
-                <div style="display:flex; align-items:center; gap:0.5rem;">
-                    <span class="source-type-pill">{doc_type}</span>
-                    <span style="font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted);">
-                        ID: {html.escape(doc_id)}
-                    </span>
-                </div>
-                <div class="source-relevance-meter">
-                    <span>{rel_pct}% relevance</span>
-                    <div class="source-relevance-track">
-                        <div class="source-relevance-fill" style="width:{rel_pct}%;"></div>
-                    </div>
-                </div>
-            </div>
-            <div class="source-content-snippet">
-                {safe_snippet}
-            </div>
-            {meta_row_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
+    # Use clean, un-indented HTML to prevent Python-Markdown from interpreting indentations as code
+    card_html = (
+        f'<div class="source-item-card">'
+        f'<div class="source-item-header">'
+        f'<div style="display:flex; align-items:center; gap:0.5rem;">'
+        f'<span class="source-type-pill">{html.escape(str(doc_type))}</span>'
+        f'<span style="font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted);">'
+        f'ID: {html.escape(doc_id)}</span></div>'
+        f'<div class="source-relevance-meter">'
+        f'<span>{rel_pct}% relevance</span>'
+        f'<div class="source-relevance-track">'
+        f'<div class="source-relevance-fill" style="width:{rel_pct}%;"></div>'
+        f'</div></div></div>'
+        f'<div class="source-content-snippet">{safe_snippet}</div>'
+        f'{meta_row_html}'
+        f'</div>'
     )
+    st.markdown(card_html, unsafe_allow_html=True)

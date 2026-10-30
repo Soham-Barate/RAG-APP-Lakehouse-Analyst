@@ -169,7 +169,13 @@ A: Customer satisfaction (CSAT) scores have shown a **mixed trend** over the pas
 I'd recommend investigating the electronics shipping delays further. Would you like me to pull support ticket data for that category?
 
 ## Instructions
-Now answer the user's question following the same format. Be accurate, cite sources, and suggest follow-ups where appropriate.
+Now answer the user's question following the same format.
+CRITICAL FORMATTING REQUIREMENTS:
+- Always respond in rich markdown with clear analytical prose, specific numbers, and key business takeaways.
+- NEVER return ONLY a raw SQL code block, bare snippet, or empty text.
+- If structured query results or tables are present in the Context, summarize the key metrics clearly and provide analytical insights.
+- If a query encountered an execution issue or returned 0 rows, clearly explain the outcome and guide the user on valid columns or questions based on available dataset tables.
+- Cite sources accurately where appropriate.
 
 Answer:"""
 

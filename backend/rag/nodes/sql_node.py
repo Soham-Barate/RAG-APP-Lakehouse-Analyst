@@ -57,32 +57,49 @@ DISALLOWED_KEYWORDS = {
 }
 
 ALLOWED_SQL_KEYWORDS = {
-    "select", "from", "where", "join", "left", "right", "inner", "outer", "full", "cross",
-    "on", "group", "by", "order", "having", "limit", "offset", "as", "distinct",
-    "and", "or", "not", "is", "null", "in", "like", "ilike", "between",
-    "case", "when", "then", "else", "end", "asc", "desc", "true", "false",
-    "all", "with", "over", "partition", "using", "union", "interval",
+    # Core DQL
+    "select", "from", "where", "group", "by", "having", "order", "limit", "offset", "as", "distinct",
+    # Joins
+    "join", "left", "right", "inner", "outer", "full", "cross", "natural", "on", "using",
+    # Logical & comparison
+    "and", "or", "not", "is", "null", "in", "like", "ilike", "between", "similar", "to", "exists",
+    "case", "when", "then", "else", "end", "asc", "desc", "true", "false", "all", "any", "some",
+    # Set, CTE & Window
+    "with", "recursive", "union", "intersect", "except", "over", "partition", "window",
+    # Null ordering
+    "nulls", "first", "last",
+    # Intervals & time units
+    "interval", "year", "years", "month", "months", "day", "days", "quarter", "quarters",
+    "week", "weeks", "hour", "hours", "minute", "minutes", "second", "seconds",
+    # Qualify & Filter
+    "qualify", "filter",
     # Data type casts
     "varchar", "integer", "int", "bigint", "smallint", "tinyint", "double", "float",
-    "decimal", "numeric", "boolean", "date", "timestamp", "text"
+    "decimal", "numeric", "boolean", "bool", "date", "timestamp", "timestamptz", "text"
 }
 
 ALLOWED_FUNCTIONS = {
     # Aggregations
-    "count", "sum", "avg", "min", "max",
+    "count", "sum", "avg", "min", "max", "median", "mode",
+    "quantile_cont", "quantile_disc", "stddev", "stddev_samp", "var_samp", "variance",
+    "approx_count_distinct",
     # Math
-    "round", "abs", "ceil", "floor", "power", "sqrt",
+    "round", "abs", "ceil", "ceiling", "floor", "power", "sqrt", "cbrt", "sign",
+    "log", "ln", "log10", "exp",
     # Conditionals & Nulls
-    "coalesce", "nullif", "greatest", "least", "cast",
+    "coalesce", "nullif", "ifnull", "nvl", "greatest", "least", "cast", "try_cast", "typeof",
     # Date & Time (DuckDB native)
-    "date_trunc", "extract", "year", "month", "day", "quarter", "epoch",
-    "strftime", "to_timestamp", "date_add", "date_sub", "datediff", "date_diff",
-    "now", "current_date", "current_timestamp", "current_time",
+    "date_trunc", "extract", "year", "month", "day", "quarter", "epoch", "epoch_ms",
+    "strftime", "strptime", "to_timestamp", "make_date", "make_timestamp",
+    "date_add", "date_sub", "datediff", "date_diff", "date_part",
+    "now", "current_date", "current_timestamp", "current_time", "today",
+    "dayofweek", "dayofyear", "week", "isodow", "isoyear", "age",
     # String manipulation
-    "lower", "upper", "trim", "ltrim", "rtrim", "concat", "length",
-    "substr", "substring", "replace", "split_part",
+    "lower", "upper", "trim", "ltrim", "rtrim", "concat", "concat_ws", "length", "len",
+    "substr", "substring", "replace", "split_part", "contains", "starts_with", "ends_with",
+    "string_agg", "group_concat", "listagg", "array_agg",
     # Window functions
-    "row_number", "rank", "dense_rank", "lag", "lead", "first_value", "last_value"
+    "row_number", "rank", "dense_rank", "ntile", "lag", "lead", "first_value", "last_value"
 }
 
 ALLOWED_IDENTIFIERS = ALL_ALLOWED_COLUMNS | ALLOWED_TABLES | ALLOWED_SQL_KEYWORDS | ALLOWED_FUNCTIONS
@@ -98,6 +115,8 @@ class SafeSQLNode:
     Translates analytical queries into SQL and executes safely via DuckDB.
     """
 
+    _active_instances: list["SafeSQLNode"] = []
+
     def __init__(
         self,
         llm_service: Any,
@@ -106,6 +125,19 @@ class SafeSQLNode:
         self.llm_service = llm_service
         self.data_dir = Path(data_dir)
         self._conn: Any = None
+        SafeSQLNode._active_instances.append(self)
+
+    @classmethod
+    def reset_connection(cls) -> None:
+        """Reset DuckDB connections across all active instances so new data is loaded."""
+        for inst in cls._active_instances:
+            if inst._conn is not None:
+                try:
+                    inst._conn.close()
+                except Exception:
+                    pass
+                inst._conn = None
+        logger.info("Reset DuckDB connections for fresh data ingestion.")
 
     def _get_connection(self) -> Any:
         """Initialize or return the DuckDB connection with tables registered and external access locked."""
@@ -234,9 +266,13 @@ class SafeSQLNode:
 
         # 5. Extract CTE aliases if query starts with WITH
         cte_names: set[str] = set()
-        cte_matches = re.finditer(r"(?:with|,)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+as\s*\(", normalized, re.IGNORECASE)
+        cte_col_aliases: set[str] = set()
+        cte_matches = re.finditer(r"(?:with|,)\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*\(([^)]+)\))?\s+as\s*\(", normalized, re.IGNORECASE)
         for m in cte_matches:
             cte_names.add(m.group(1).lower())
+            if m.group(2):
+                for col in re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", m.group(2).lower()):
+                    cte_col_aliases.add(col)
 
         # 6. Extract word tokens
         tokens = re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", normalized.lower())
@@ -250,7 +286,7 @@ class SafeSQLNode:
 
         # 8. Table allowlist validation: verify tables following FROM and JOIN
         found_tables: set[str] = set()
-        aliases: set[str] = set(cte_names)
+        aliases: set[str] = set(cte_names) | cte_col_aliases
         permitted_tables = target_tables | cte_names
 
         for i, token in enumerate(tokens):

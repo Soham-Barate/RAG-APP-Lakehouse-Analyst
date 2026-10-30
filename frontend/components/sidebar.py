@@ -13,6 +13,33 @@ from typing import Any
 import streamlit as st
 
 
+def _trigger_data_regeneration() -> None:
+    """Trigger synthetic lakehouse data regeneration either via FastAPI or direct fallback."""
+    import os
+    import requests
+    backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+    api_key = os.getenv("API_KEY", "dev-key-1")
+    try:
+        resp = requests.post(
+            f"{backend_url}/api/v1/datasets/regenerate-demo",
+            headers={"X-API-Key": api_key},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return
+    except Exception:
+        pass
+
+    # Direct local fallback
+    try:
+        from ingestion.synthetic.data_generator import SyntheticDataGenerator
+        from backend.rag.nodes.sql_node import SafeSQLNode
+        SyntheticDataGenerator.regenerate_new_data()
+        SafeSQLNode.reset_connection()
+    except Exception:
+        pass
+
+
 def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Render executive sidebar controls and return active filter & toggle dictionary.
@@ -29,10 +56,12 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
             unsafe_allow_html=True,
         )
 
-        # New Analysis Thread Button
+        # New Analysis Thread Button (Regenerates fresh dataset and resets thread)
         if st.button("New Analysis Thread", use_container_width=True, type="primary"):
+            _trigger_data_regeneration()
             st.session_state.messages = []
             st.session_state.conversation_id = str(uuid.uuid4())
+            st.session_state.active_view = "ANALYSIS CONSOLE"
             st.rerun()
 
         # Active Dataset Selector
@@ -196,7 +225,7 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
 
         st.markdown(
             f"""
-            <div style="margin-top:1.5rem; padding-top:0.75rem; border-top:1px solid var(--border-subtle);
+            <div style="margin-top:1.25rem; padding-top:0.75rem; border-top:1px solid var(--border-subtle);
                         font-family:var(--font-mono); font-size:0.6875rem; color:var(--text-muted); display:flex; justify-content:space-between;">
                 <span>Session: {short_id}</span>
                 <span>Queries: {msg_count}</span>
@@ -204,6 +233,25 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
             """,
             unsafe_allow_html=True,
         )
+
+        # Quick Lakehouse Data Controls at Bottom of Panel
+        st.markdown(
+            '<div class="sidebar-section-header" style="margin-top:0.75rem;">Lakehouse Data Controls</div>',
+            unsafe_allow_html=True,
+        )
+
+        col_side1, col_side2 = st.columns(2)
+        with col_side1:
+            if st.button("View Lakehouse Data", use_container_width=True, key="btn_view_lakehouse_data", help="Inspect newly generated or active lakehouse tables"):
+                st.session_state.active_view = "LAKEHOUSE TABLE EXPLORER"
+                st.rerun()
+
+        with col_side2:
+            if st.button("Regenerate Data", use_container_width=True, key="btn_regen_lakehouse_data", help="Generate fresh synthetic orders, revenue, and customer records"):
+                with st.spinner("Regenerating..."):
+                    _trigger_data_regeneration()
+                st.toast("Fresh lakehouse transactions generated!")
+                st.rerun()
 
         return {
             "active_dataset_id": selected_id,

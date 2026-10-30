@@ -108,3 +108,4 @@ class InMemoryVectorStore(VectorStoreBase):
     async def close(self) -> None:
         self.documents.clear()
         self.parents.clear()
+

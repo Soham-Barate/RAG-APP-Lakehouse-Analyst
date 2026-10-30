@@ -197,14 +197,10 @@ DATASET_CATALOG: dict[str, dict[str, Any]] = {
 }
 
 
-@st.cache_data(show_spinner=False)
-def load_dataset_metadata(dataset_key: str) -> dict[str, Any]:
+@st.cache_data(show_spinner=False, ttl=2)
+def load_dataset_metadata(dataset_key: str, path_str: str, mtime: float = 0.0) -> dict[str, Any]:
     """Inspect dataset file directly using DuckDB or file stats."""
-    info = DATASET_CATALOG.get(dataset_key)
-    if not info:
-        return {}
-
-    file_path = info["path"]
+    file_path = Path(path_str)
     if not file_path.exists():
         return {"exists": False, "error": f"File not found: {file_path.name}"}
 
@@ -223,6 +219,8 @@ def load_dataset_metadata(dataset_key: str) -> dict[str, Any]:
 
         describe_res = conn.execute(f"DESCRIBE SELECT * FROM {duckdb_source} LIMIT 1").fetchall()
         columns_meta = []
+        info = DATASET_CATALOG.get(dataset_key, {})
+        col_desc_map = info.get("column_descriptions", {})
         for col in describe_res:
             col_name = str(col[0])
             col_type = str(col[1])
@@ -231,7 +229,7 @@ def load_dataset_metadata(dataset_key: str) -> dict[str, Any]:
                 "column": col_name,
                 "type": col_type,
                 "nullable": is_nullable,
-                "description": info["column_descriptions"].get(col_name, "Standard lakehouse attribute"),
+                "description": col_desc_map.get(col_name, "Standard dataset attribute"),
             })
 
         return {
@@ -271,18 +269,48 @@ def render_table_explorer() -> None:
         unsafe_allow_html=True,
     )
 
-    # Dataset Selection Ribbon
+    # Dataset Selection Ribbon (combines Medallion lakehouse tables and user-uploaded datasets)
+    catalog = dict(DATASET_CATALOG)
+    try:
+        from backend.dataset.manager import get_dataset_manager
+        user_datasets = get_dataset_manager().list_datasets()
+        for u in user_datasets:
+            if not u.is_demo and u.parquet_path:
+                u_path = Path(u.parquet_path)
+                if u_path.exists():
+                    catalog[u.table_name] = {
+                        "name": u.table_name,
+                        "tier": "USER",
+                        "description": f"User-uploaded dataset from {u.filename} (Isolated DuckDB Table)",
+                        "path": u_path,
+                        "format": f"Parquet ({u.file_format.upper()})",
+                        "column_descriptions": {},
+                        "preset_queries": [
+                            (
+                                f"Preview 10 Rows from {u.table_name}",
+                                f"SELECT * FROM {u.table_name} LIMIT 10",
+                            ),
+                            (
+                                f"Count Records in {u.table_name}",
+                                f"SELECT count(*) AS total_records FROM {u.table_name}",
+                            ),
+                        ],
+                    }
+    except Exception:
+        pass
+
     col_sel, col_stats = st.columns([1, 2])
     with col_sel:
         selected_key = st.selectbox(
             "Select Lakehouse Dataset",
-            options=list(DATASET_CATALOG.keys()),
-            format_func=lambda k: f"{k.upper()} ({DATASET_CATALOG[k]['tier']} TIER)",
+            options=list(catalog.keys()),
+            format_func=lambda k: f"{k.upper()} ({catalog[k]['tier']} TIER)",
             key="lakehouse_selected_dataset",
         )
 
-    dataset_def = DATASET_CATALOG[selected_key]
-    meta = load_dataset_metadata(selected_key)
+    dataset_def = catalog[selected_key]
+    file_mtime = dataset_def["path"].stat().st_mtime if dataset_def["path"].exists() else 0.0
+    meta = load_dataset_metadata(selected_key, path_str=str(dataset_def["path"]), mtime=file_mtime)
 
     with col_stats:
         tier_cls = f"tier-{dataset_def['tier'].lower()}"

@@ -47,10 +47,15 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Load Custom Executive Stylesheet
+# Load Fonts and Custom Executive Stylesheet
+font_tags = """
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
+"""
 css_path = Path(__file__).parent / "styles" / "custom.css"
 if css_path.exists():
-    st.markdown(f"<style>{css_path.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
+    st.markdown(f"{font_tags}\n<style>{css_path.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Session State Initialization
@@ -266,13 +271,15 @@ def _render_analysis_console(sidebar_config: dict[str, Any]) -> None:
                 # Render Structured SQL + Vector Evidence
                 sql_q = msg.get("sql_query") if sidebar_config.get("show_sql") else None
                 sql_res = msg.get("sql_results") if sidebar_config.get("show_sql") else None
+                sql_err = msg.get("sql_error") if sidebar_config.get("show_sql") else None
                 vector_src = msg.get("sources") if sidebar_config.get("show_sources") else None
 
-                if sql_q or sql_res or vector_src:
+                if sql_q or sql_res or sql_err or vector_src:
                     render_sources(
                         sources=vector_src,
                         sql_query=sql_q,
                         sql_results=sql_res,
+                        sql_error=sql_err,
                     )
 
                 # Render Pipeline Metrics Ribbon
@@ -330,6 +337,7 @@ def _render_analysis_console(sidebar_config: dict[str, Any]) -> None:
             "route": response.get("route"),
             "sql_query": response.get("sql_query"),
             "sql_results": response.get("sql_results"),
+            "sql_error": response.get("sql_error"),
             "sources": response.get("sources", []),
             "metrics": response.get("metrics", {}),
             "disclaimer": response.get("disclaimer"),

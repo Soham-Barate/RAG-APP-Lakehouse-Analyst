@@ -89,8 +89,52 @@ class ResponseGenerator:
                 latency_ms,
             )
 
+            # Quality Safeguard: prevent "code block only" or empty responses
+            cleaned_answer = answer.strip()
+            sql_results = state.get("sql_results", [])
+            sql_error = state.get("sql_error")
+
+            is_bare_code_block = (
+                (cleaned_answer.startswith("```") and cleaned_answer.endswith("```") and cleaned_answer.count("```") == 2)
+                or len(cleaned_answer) < 30
+            )
+
+            if is_bare_code_block:
+                if sql_results and len(sql_results) > 0:
+                    import pandas as pd
+                    sample_df = pd.DataFrame(sql_results[:10])
+                    sample_table = sample_df.to_markdown(index=False)
+                    first_col = sample_df.columns[0]
+                    cleaned_answer = (
+                        f"### Executive Analysis Summary\n\n"
+                        f"Analysis executed successfully against the active dataset ({len(sql_results):,} matching records found):\n\n"
+                        f"{sample_table}\n\n"
+                        f"**Key Analytical Findings:**\n"
+                        f"- Total records evaluated: **{len(sql_results):,}**\n"
+                        f"- Primary dimension: **{first_col}**\n"
+                        f"- Would you like to break this down by another dimension or filter by date range?"
+                    )
+                elif sql_error:
+                    cleaned_answer = (
+                        f"### Structured Query Notice\n\n"
+                        f"The requested analytical query could not be executed against the active dataset schema:\n"
+                        f"> `{sql_error}`\n\n"
+                        f"**Suggestions:**\n"
+                        f"- Please verify the target column names in the active dataset schema.\n"
+                        f"- For example, you can query by `category`, `price`, `rating`, `total_amount`, or `status`."
+                    )
+                elif not sql_results and state.get("sql_query"):
+                    cleaned_answer = (
+                        f"### Query Completed (Zero Records Matched)\n\n"
+                        f"The analytical query executed successfully, but zero records matched your specific filter criteria in the current dataset.\n\n"
+                        f"**Suggestions:**\n"
+                        f"- Try widening your date range or adjusting filter parameters.\n"
+                        f"- Ask a broader question such as *'Show top categories by order volume'*."
+                    )
+            answer = cleaned_answer
+
             out_dict = {
-                "answer": answer.strip(),
+                "answer": answer,
                 "confidence_score": confidence,
                 "sources": sources,
                 "disclaimer": disclaimer,

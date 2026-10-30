@@ -154,6 +154,34 @@ async def get_dataset_preview(
     return manager.get_sample_rows(dataset_id, limit=limit)
 
 
+@router.post(
+    "/regenerate-demo",
+    summary="Regenerate synthetic e-commerce lakehouse demo data with fresh transactions",
+)
+async def regenerate_demo_dataset() -> dict[str, Any]:
+    """
+    Regenerate the synthetic demo dataset with fresh random seed.
+    Refreshes orders, revenue, customer spend, and re-attaches DuckDB views.
+    """
+    try:
+        from ingestion.synthetic.data_generator import SyntheticDataGenerator
+        from backend.rag.nodes.sql_node import SafeSQLNode
+
+        SyntheticDataGenerator.regenerate_new_data()
+        SafeSQLNode.reset_connection()
+
+        return {
+            "success": True,
+            "message": "Demo lakehouse data regenerated with fresh transactions and updated revenue.",
+        }
+    except Exception as exc:
+        logger.error("Failed to regenerate synthetic data: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Data regeneration failed: {exc}",
+        ) from exc
+
+
 @router.delete(
     "/{dataset_id}",
     summary="Delete a user-uploaded dataset and purge disk artifacts",

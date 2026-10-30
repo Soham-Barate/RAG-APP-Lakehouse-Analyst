@@ -111,9 +111,19 @@ TICKET_TEMPLATES = [
 class SyntheticDataGenerator:
     """Generates realistic e-commerce demo data."""
 
-    def __init__(self, output_dir: str = "data") -> None:
+    def __init__(self, output_dir: str = "data", seed: int | None = 42) -> None:
         self.output_dir = Path(output_dir)
-        random.seed(42)  # Reproducible data
+        if seed is not None:
+            random.seed(seed)
+        else:
+            import time
+            random.seed(int(time.time() * 1000) % 10000000)
+
+    @classmethod
+    def regenerate_new_data(cls, output_dir: str = "data") -> Path:
+        """Regenerate fresh synthetic data with dynamic randomness."""
+        instance = cls(output_dir=output_dir, seed=None)
+        return instance.generate_all()
 
     def generate_all(self) -> Path:
         """Generate all synthetic data and write to output directory."""

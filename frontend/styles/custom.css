@@ -69,10 +69,8 @@ p, label, input, button, select, textarea {
     font-family: var(--font-sans);
 }
 
-/* Ensure Material Symbols ligatures are NEVER overridden by text fonts */
+/* Ensure Material Symbols ligatures are handled cleanly */
 [data-testid="stIconMaterial"],
-[data-testid="stSidebarCollapseButton"] span,
-[data-testid="stExpander"] summary span:first-child,
 .material-symbols-rounded,
 .material-symbols-outlined,
 .material-icons,
@@ -90,6 +88,30 @@ p, label, input, button, select, textarea {
     font-feature-settings: 'liga' 1 !important;
     -webkit-font-feature-settings: 'liga' !important;
     -webkit-font-smoothing: antialiased !important;
+}
+
+[data-testid="stExpander"] {
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: var(--radius-sm) !important;
+    background: rgba(255, 255, 255, 0.02) !important;
+    margin-top: 0.5rem !important;
+}
+
+[data-testid="stExpander"] summary {
+    font-family: var(--font-sans) !important;
+    font-size: 0.75rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.03em !important;
+    color: var(--text-secondary) !important;
+    padding: 0.5rem 0.75rem !important;
+}
+
+[data-testid="stExpander"] summary p {
+    font-size: 0.75rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.03em !important;
+    color: var(--text-secondary) !important;
+    margin: 0 !important;
 }
 
 .stApp {
