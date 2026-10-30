@@ -41,16 +41,26 @@ class GuardrailsNode:
         """Lazy-initialize Presidio analyzer and anonymizer."""
         if self._analyzer is None:
             try:
+                import spacy
+                # Check if spacy language model is locally installed.
+                # If neither is present, avoid triggering spacy.cli.download() which
+                # attempts a 400MB pip download and fails under non-root Docker environments.
+                if not (spacy.util.is_package("en_core_web_sm") or spacy.util.is_package("en_core_web_lg")):
+                    logger.info("Spacy model not installed locally — using fast regex PII redaction.")
+                    self._analyzer = False
+                    return
+
                 from presidio_analyzer import AnalyzerEngine
                 from presidio_anonymizer import AnonymizerEngine
 
                 self._analyzer = AnalyzerEngine()
                 self._anonymizer = AnonymizerEngine()
-            except ImportError:
+            except BaseException as exc:
                 logger.warning(
-                    "Presidio not installed — PII detection disabled. "
-                    "Install presidio-analyzer and presidio-anonymizer."
+                    "Presidio initialization bypassed (%s) — using fast regex PII redaction.",
+                    exc,
                 )
+                self._analyzer = False
 
     async def __call__(self, state: RAGState) -> dict[str, Any]:
         """Run all guardrail checks on the generated response."""
@@ -97,8 +107,12 @@ class GuardrailsNode:
         }
 
     def _redact_pii(self, text: str) -> tuple[str, list[str]]:
-        """Detect and redact PII using Microsoft Presidio."""
-        self._init_presidio()
+        """Detect and redact PII using Microsoft Presidio or regex fallback."""
+        try:
+            self._init_presidio()
+        except BaseException as exc:
+            logger.warning("Error initializing Presidio: %s — falling back to regex.", exc)
+            self._analyzer = False
 
         if not self._analyzer:
             # Fallback: regex-based PII detection
@@ -129,8 +143,8 @@ class GuardrailsNode:
             entities_found = list({r.entity_type for r in results})
             return anonymized.text, entities_found
 
-        except Exception as exc:
-            logger.warning("Presidio PII detection failed: %s", exc)
+        except BaseException as exc:
+            logger.warning("Presidio PII detection failed: %s — using regex fallback.", exc)
             return self._regex_pii_redaction(text)
 
     def _regex_pii_redaction(self, text: str) -> tuple[str, list[str]]:
