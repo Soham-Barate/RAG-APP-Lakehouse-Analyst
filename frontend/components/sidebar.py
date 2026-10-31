@@ -13,20 +13,35 @@ from typing import Any
 import streamlit as st
 
 
-def _trigger_data_regeneration() -> None:
-    """Trigger synthetic lakehouse data regeneration either via FastAPI or direct fallback."""
+def _trigger_data_regeneration(scale: str = "quick") -> dict[str, Any] | None:
+    """Trigger synthetic lakehouse data regeneration via FastAPI or direct fallback."""
     import os
     import requests
     backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
     api_key = os.getenv("API_KEY", "dev-key-1")
+
+    # Use async endpoint for medium/large/enterprise to prevent HTTP gateway timeout
+    if scale in ("medium", "large", "enterprise"):
+        try:
+            resp = requests.post(
+                f"{backend_url}/api/v1/datasets/regenerate-async?scale={scale}",
+                headers={"X-API-Key": api_key},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+
+    # Synchronous endpoint for quick demo
     try:
         resp = requests.post(
-            f"{backend_url}/api/v1/datasets/regenerate-demo",
+            f"{backend_url}/api/v1/datasets/regenerate-demo?scale={scale}",
             headers={"X-API-Key": api_key},
-            timeout=10,
+            timeout=60,
         )
         if resp.status_code == 200:
-            return
+            return resp.json()
     except Exception:
         pass
 
@@ -34,10 +49,30 @@ def _trigger_data_regeneration() -> None:
     try:
         from ingestion.synthetic.data_generator import SyntheticDataGenerator
         from backend.rag.nodes.sql_node import SafeSQLNode
-        SyntheticDataGenerator.regenerate_new_data()
+        SyntheticDataGenerator.regenerate_new_data(scale=scale)
         SafeSQLNode.reset_connection()
+        return {"status": "completed", "scale": scale}
+    except Exception:
+        return None
+
+
+def _check_job_status(job_id: str) -> dict[str, Any] | None:
+    """Query backend for status of an asynchronous background job."""
+    import os
+    import requests
+    backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+    api_key = os.getenv("API_KEY", "dev-key-1")
+    try:
+        resp = requests.get(
+            f"{backend_url}/api/v1/datasets/jobs/{job_id}",
+            headers={"X-API-Key": api_key},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            return resp.json()
     except Exception:
         pass
+    return None
 
 
 def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -235,6 +270,55 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
             unsafe_allow_html=True,
         )
 
+        scale_options = {
+            "quick": "Quick Demo (~50K rows, ~5MB)",
+            "medium": "Medium Scale (~2M rows, ~200MB)",
+            "large": "Large Scale (~10M rows, ~1GB)",
+            "enterprise": "Enterprise Scale (~50M rows, ~5GB)",
+        }
+        chosen_scale = st.selectbox(
+            "Generation Scale Target",
+            options=list(scale_options.keys()),
+            format_func=lambda x: scale_options[x],
+            index=0,
+            key="lakehouse_generation_scale",
+            help="Choose scale volume for synthetic orders generation. Multi-gigabyte scales stream out-of-core without RAM exhaustion.",
+        )
+
+        # Active background job tracker
+        active_job_id = st.session_state.get("active_job_id")
+        if active_job_id:
+            job_info = _check_job_status(active_job_id)
+            if job_info:
+                j_status = job_info.get("status", "running")
+                j_pct = min(1.0, max(0.0, float(job_info.get("progress_pct", 0.0)) / 100.0))
+                j_stage = job_info.get("stage", "processing").replace("_", " ").title()
+                j_msg = job_info.get("message", "")
+                j_rows = job_info.get("rows_processed", 0)
+
+                if j_status == "running":
+                    st.markdown(
+                        f'<div style="font-size:0.6875rem; font-family:var(--font-mono); color:#38bdf8; margin:0.5rem 0 0.25rem 0;">'
+                        f'BACKGROUND JOB: {active_job_id[:12]} ({j_stage})</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.progress(j_pct)
+                    st.markdown(
+                        f'<div style="font-size:0.625rem; font-family:var(--font-mono); color:var(--text-muted);">'
+                        f'{j_msg} | {j_rows:,} rows</div>',
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("Refresh Job Progress", key="btn_refresh_job", use_container_width=True):
+                        st.rerun()
+                elif j_status == "completed":
+                    st.success(f"Generation Complete! {j_rows:,} rows ready.")
+                    st.session_state.active_job_id = None
+                    if st.button("Reload Dataset Views", key="btn_job_done_reload", use_container_width=True):
+                        st.rerun()
+                elif j_status == "failed":
+                    st.error(f"Job Failed: {job_info.get('error', 'Unknown error')}")
+                    st.session_state.active_job_id = None
+
         col_side1, col_side2 = st.columns(2)
         with col_side1:
             if st.button("View Generated Data", use_container_width=True, key="btn_view_lakehouse_data", help="Inspect newly generated or active lakehouse tables in Lakehouse Table Explorer"):
@@ -243,10 +327,20 @@ def render_sidebar(health_info: dict[str, Any] | None = None) -> dict[str, Any]:
 
         with col_side2:
             if st.button("Regenerate Data", use_container_width=True, key="btn_regen_lakehouse_data", help="Generate fresh synthetic orders, revenue, and customer records"):
-                with st.spinner("Generating fresh transactions..."):
-                    _trigger_data_regeneration()
-                st.toast("Fresh lakehouse transactions generated and reloaded!")
-                st.rerun()
+                if chosen_scale == "quick":
+                    with st.spinner("Generating fresh transactions (~50K rows)..."):
+                        _trigger_data_regeneration(scale=chosen_scale)
+                    st.toast("Fresh lakehouse transactions generated and reloaded!")
+                    st.rerun()
+                else:
+                    with st.spinner(f"Initiating background streaming generation ({chosen_scale})..."):
+                        res = _trigger_data_regeneration(scale=chosen_scale)
+                        if res and "job_id" in res:
+                            st.session_state.active_job_id = res["job_id"]
+                            st.toast(f"Async generation started: {res['job_id']}")
+                        else:
+                            st.toast(f"Dataset generated ({chosen_scale})")
+                        st.rerun()
 
         return {
             "active_dataset_id": selected_id,

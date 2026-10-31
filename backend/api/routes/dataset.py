@@ -5,19 +5,36 @@ Uploads, automated profiling, schema inspection, and dataset isolation.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import shutil
+import tempfile
+import uuid
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 
 from backend.api.middleware.auth import verify_api_key
 from backend.dataset.indexer import DatasetTextIndexer
+from backend.dataset.jobs import JobStage, get_job_manager
 from backend.dataset.manager import (
     DEMO_DATASET_ID,
     DatasetValidationError,
     get_dataset_manager,
 )
 from backend.dataset.models import DataQualityReport, DatasetMetadata
+from backend.dataset.streaming import stream_upload_file
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +66,7 @@ async def upload_dataset(
     Upload a user dataset. Performs extension and magic-byte validation,
     sanitizes column identifiers, persists Parquet representation,
     generates automated data profiling, and registers an isolated DuckDB table.
+    Streams directly to disk with bounded memory (<4 MB buffer) to support up to 5 GB.
     """
     if not file.filename:
         raise HTTPException(
@@ -56,20 +74,26 @@ async def upload_dataset(
             detail="Filename must be provided.",
         )
 
-    try:
-        file_bytes = await file.read()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed reading uploaded file: {exc}",
-        ) from exc
+    upload_temp_dir = Path("data/uploads/.tmp")
+    upload_temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_upload_file = upload_temp_dir / f"upload_{uuid.uuid4().hex[:8]}_{file.filename}"
+
+    async def file_chunk_generator():
+        while True:
+            chunk = await file.read(4 * 1024 * 1024)  # 4 MB chunk
+            if not chunk:
+                break
+            yield chunk
 
     manager = get_dataset_manager()
     try:
-        metadata = manager.upload_dataset(
-            file_bytes=file_bytes,
-            filename=file.filename,
-            content_type=file.content_type,
+        await stream_upload_file(
+            file_chunks=file_chunk_generator(),
+            destination_path=temp_upload_file,
+        )
+        metadata = manager.ingest_from_disk_streaming(
+            raw_file_path=temp_upload_file,
+            original_filename=file.filename,
         )
     except DatasetValidationError as exc:
         raise HTTPException(
@@ -77,11 +101,17 @@ async def upload_dataset(
             detail=str(exc),
         ) from exc
     except Exception as exc:
-        logger.error("Unexpected error during dataset upload: %s", exc, exc_info=True)
+        logger.error("Unexpected error during streaming upload: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal dataset ingestion error: {exc}",
         ) from exc
+    finally:
+        if temp_upload_file.exists():
+            try:
+                temp_upload_file.unlink()
+            except OSError:
+                pass
 
     # Retrieve profiling report
     profile = manager.get_profiling_report(metadata.dataset_id)
@@ -158,7 +188,116 @@ async def get_dataset_preview(
     "/regenerate-demo",
     summary="Regenerate synthetic e-commerce lakehouse demo data with fresh transactions",
 )
-async def regenerate_demo_dataset() -> dict[str, Any]:
+async def regenerate_demo_dataset(
+    scale: str = Query(default="quick", pattern="^(quick|medium|large|enterprise)$"),
+) -> dict[str, Any]:
+    """
+    Regenerate the synthetic demo dataset with fresh random seed at the chosen scale.
+    Refreshes orders, revenue, customer spend, and re-attaches DuckDB views.
+    Scales:
+      - quick: ~50K rows, ~5 MB Parquet
+      - medium: ~2M rows, ~200 MB Parquet
+      - large: ~10M rows, ~1 GB Parquet
+      - enterprise: ~50M rows, ~5 GB Parquet
+    """
+    try:
+        from ingestion.synthetic.data_generator import SyntheticDataGenerator
+        from backend.rag.nodes.sql_node import SafeSQLNode
+
+        t0 = time.perf_counter()
+        SyntheticDataGenerator.regenerate_new_data(scale=scale)
+        SafeSQLNode.reset_connection()
+        duration = round(time.perf_counter() - t0, 2)
+
+        orders_path = Path("data/silver/orders.parquet")
+        orders_size_mb = round(orders_path.stat().st_size / (1024 * 1024), 2) if orders_path.exists() else 0.0
+
+        return {
+            "success": True,
+            "scale": scale,
+            "duration_seconds": duration,
+            "orders_parquet_size_mb": orders_size_mb,
+            "message": f"Demo lakehouse data regenerated at scale '{scale}' in {duration}s ({orders_size_mb} MB).",
+        }
+    except Exception as exc:
+        logger.error("Failed to regenerate synthetic data: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Data regeneration failed: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/regenerate-async",
+    summary="Asynchronously regenerate synthetic lakehouse data in background with live progress tracking",
+)
+async def regenerate_demo_async(
+    background_tasks: BackgroundTasks,
+    scale: str = Query(default="quick", pattern="^(quick|medium|large|enterprise)$"),
+) -> dict[str, Any]:
+    """Start asynchronous dataset generation in background with durable progress tracking."""
+    job_mgr = get_job_manager()
+    job = job_mgr.create_job(
+        job_type="synthetic_generation",
+        dataset_id=DEMO_DATASET_ID,
+        details={"scale": scale},
+    )
+
+    def _run_bg_generation(job_id: str, target_scale: str):
+        from ingestion.synthetic.data_generator import SyntheticDataGenerator
+        from backend.rag.nodes.sql_node import SafeSQLNode
+
+        def progress_cb(msg: str, pct: float):
+            job_mgr.update_stage(
+                job_id=job_id,
+                stage=JobStage.SILVER_PROCESSING if pct < 0.9 else JobStage.GOLD_PROCESSING,
+                progress_pct=round(pct * 100, 1),
+                message=msg,
+            )
+
+        try:
+            SyntheticDataGenerator.regenerate_new_data(scale=target_scale, progress_cb=progress_cb)
+            SafeSQLNode.reset_connection()
+            orders_path = Path("data/silver/orders.parquet")
+            size_mb = round(orders_path.stat().st_size / (1024 * 1024), 2) if orders_path.exists() else 0.0
+            job_mgr.complete_job(job_id, {"orders_parquet_size_mb": size_mb, "scale": target_scale})
+        except Exception as exc:
+            job_mgr.fail_job(job_id, str(exc))
+
+    background_tasks.add_task(_run_bg_generation, job.job_id, scale)
+    return {
+        "success": True,
+        "job_id": job.job_id,
+        "scale": scale,
+        "status": "running",
+        "message": f"Background generation started at scale '{scale}'. Track progress via /api/v1/datasets/jobs/{job.job_id}",
+    }
+
+
+@router.get(
+    "/jobs/{job_id}",
+    summary="Check status and real-time progress percentage of an asynchronous ingestion/generation job",
+)
+async def get_job_status(job_id: str) -> dict[str, Any]:
+    """Poll job progress percentage and stage."""
+    job_mgr = get_job_manager()
+    job = job_mgr.get_job(job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job '{job_id}' not found.",
+        )
+    return job.to_dict()
+
+
+@router.get(
+    "/jobs",
+    summary="List recent background ingestion and generation jobs",
+)
+async def list_jobs(limit: int = Query(default=20, ge=1, le=100)) -> list[dict[str, Any]]:
+    """List recent background jobs."""
+    job_mgr = get_job_manager()
+    return [j.to_dict() for j in job_mgr.list_jobs(limit=limit)]
     """
     Regenerate the synthetic demo dataset with fresh random seed.
     Refreshes orders, revenue, customer spend, and re-attaches DuckDB views.

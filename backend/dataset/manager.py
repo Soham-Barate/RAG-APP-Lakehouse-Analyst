@@ -8,8 +8,10 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import re
 import shutil
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,14 +21,19 @@ import pandas as pd
 
 from backend.dataset.models import DataQualityReport, DatasetMetadata
 from backend.dataset.profiler import DataProfiler
+from backend.dataset.streaming import (
+    DEFAULT_MAX_UPLOAD_BYTES,
+    convert_to_silver_parquet,
+    sanitize_column_identifier,
+)
 
 logger = logging.getLogger(__name__)
 
 # Constants
 DEFAULT_UPLOAD_DIR = Path("data/uploads")
 MANIFEST_FILENAME = "manifest.json"
-MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
-ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".parquet", ".json", ".jsonl"}
+MAX_UPLOAD_SIZE_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(DEFAULT_MAX_UPLOAD_BYTES)))  # Default 5 GB
+ALLOWED_EXTENSIONS = {".csv", ".tsv", ".xlsx", ".xls", ".parquet", ".json", ".jsonl"}
 
 # Synthetic lakehouse demo identifier
 DEMO_DATASET_ID = "demo_lakehouse"
@@ -225,9 +232,12 @@ class DatasetManager:
         content_type: str | None = None,
     ) -> DatasetMetadata:
         """
-        Validate, parse, profile, and persist an uploaded dataset file.
-        Supports CSV, XLSX, XLS, Parquet, JSON, and JSONL.
+        Validate, parse, profile, and persist an uploaded dataset file into
+        the Bronze/Silver lakehouse layers with zero-copy Parquet storage.
+        Supports CSV, TSV, XLSX, XLS, Parquet, JSON, and JSONL up to 5 GB.
         """
+        t0 = time.perf_counter()
+
         # 1. Size Validation
         size_bytes = len(file_bytes)
         if size_bytes == 0:
@@ -247,31 +257,53 @@ class DatasetManager:
 
         self._validate_file_signature(file_bytes, ext)
 
-        # 3. Parse File into DataFrame Safely
-        df = self._parse_file_to_df(file_bytes, ext, filename)
-
-        if len(df) == 0:
-            raise DatasetValidationError("Dataset contains zero data rows.")
-        if len(df.columns) == 0:
-            raise DatasetValidationError("Dataset contains zero columns.")
-
-        # 4. Sanitize Column Names
-        df, _ = self.sanitize_dataframe_columns(df)
-
-        # 5. Create Isolated Dataset Directory
+        # 3. Create Medallion Directory Structure (Bronze / Silver / Gold)
         dataset_id = f"ds_{uuid.uuid4().hex[:8]}"
         dataset_dir = self.upload_dir / dataset_id
-        dataset_dir.mkdir(parents=True, exist_ok=True)
+        bronze_dir = dataset_dir / "bronze"
+        silver_dir = dataset_dir / "silver"
+        gold_dir = dataset_dir / "gold"
 
-        raw_saved_path = dataset_dir / f"raw{ext}"
-        with open(raw_saved_path, "wb") as f:
+        for d in (bronze_dir, silver_dir, gold_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+        bronze_raw_path = bronze_dir / f"raw{ext}"
+        with open(bronze_raw_path, "wb") as f:
             f.write(file_bytes)
 
-        parquet_saved_path = dataset_dir / "data.parquet"
-        df.to_parquet(parquet_saved_path, index=False)
+        # 4. Out-of-core Conversion to Silver Parquet
+        silver_parquet_path = silver_dir / "data.parquet"
+        try:
+            conv_info = convert_to_silver_parquet(
+                source_path=bronze_raw_path,
+                target_parquet_path=silver_parquet_path,
+            )
+            row_count = conv_info["row_count"]
+            col_count = conv_info["column_count"]
+        except Exception as exc:
+            # Fallback for edge cases (e.g. tiny test JSONs)
+            try:
+                df = self._parse_file_to_df(file_bytes, ext, filename)
+                if len(df) == 0:
+                    raise DatasetValidationError("Dataset contains zero data rows.")
+                if len(df.columns) == 0:
+                    raise DatasetValidationError("Dataset contains zero columns.")
+                df, _ = self.sanitize_dataframe_columns(df)
+                df.to_parquet(silver_parquet_path, index=False)
+                row_count = len(df)
+                col_count = len(df.columns)
+            except DatasetValidationError:
+                raise
+            except Exception as inner_exc:
+                raise DatasetValidationError(f"Could not ingest dataset: {inner_exc}") from inner_exc
 
-        # 6. Run Data Profiling & Save Report
-        profile_report = DataProfiler.profile_dataframe(df)
+        if row_count == 0:
+            raise DatasetValidationError("Dataset contains zero data rows.")
+        if col_count == 0:
+            raise DatasetValidationError("Dataset contains zero columns.")
+
+        # 5. Scalable Profiling on Silver Parquet
+        profile_report = DataProfiler.profile_parquet_file(silver_parquet_path)
         profile_path = dataset_dir / "profile.json"
         with open(profile_path, "w", encoding="utf-8") as f:
             f.write(profile_report.model_dump_json(indent=2))
@@ -282,11 +314,12 @@ class DatasetManager:
         # Derive safe table name
         safe_name = self.sanitize_column_name(file_path_obj.stem)
         table_name = f"user_{safe_name}" if not safe_name.startswith("user_") else safe_name
-        # Keep table name unique
         manifest = self._read_manifest()
         existing_tables = {d.get("table_name") for d in manifest.values()}
         if table_name in existing_tables:
             table_name = f"{table_name}_{dataset_id[-4:]}"
+
+        duration_sec = round(time.perf_counter() - t0, 3)
 
         metadata = DatasetMetadata(
             dataset_id=dataset_id,
@@ -294,12 +327,17 @@ class DatasetManager:
             filename=filename,
             file_format=ext.lstrip("."),
             size_bytes=size_bytes,
-            row_count=len(df),
-            column_count=len(df.columns),
+            row_count=row_count,
+            column_count=col_count,
             table_name=table_name,
             created_at=datetime.now(timezone.utc).isoformat(),
-            storage_path=raw_saved_path.as_posix(),
-            parquet_path=parquet_saved_path.as_posix(),
+            storage_path=bronze_raw_path.as_posix(),
+            parquet_path=silver_parquet_path.as_posix(),
+            bronze_path=bronze_raw_path.as_posix(),
+            silver_path=silver_parquet_path.as_posix(),
+            gold_path=silver_parquet_path.as_posix(),
+            processing_duration_sec=duration_sec,
+            status="ready",
             has_text_indexed=has_text_cols,
             is_demo=False,
             tables=[table_name],
@@ -309,14 +347,121 @@ class DatasetManager:
         self._write_manifest(manifest)
 
         logger.info(
-            "Successfully ingested user dataset '%s' (id=%s, rows=%d, cols=%d, table=%s)",
+            "Successfully ingested user dataset '%s' (id=%s, rows=%d, cols=%d, table=%s, duration=%.2fs)",
             filename,
             dataset_id,
-            len(df),
-            len(df.columns),
+            row_count,
+            col_count,
             table_name,
+            duration_sec,
         )
 
+        return metadata
+
+    def ingest_from_disk_streaming(
+        self,
+        raw_file_path: Path,
+        original_filename: str,
+    ) -> DatasetMetadata:
+        """
+        Ingest a file that was already streamed to disk into the Medallion architecture.
+        Zero memory spikes even for 5 GB files.
+        """
+        t0 = time.perf_counter()
+        if not raw_file_path.exists():
+            raise DatasetValidationError(f"File not found on disk: {raw_file_path}")
+
+        size_bytes = raw_file_path.stat().st_size
+        if size_bytes == 0:
+            raise DatasetValidationError("Uploaded file is empty (0 bytes).")
+        if size_bytes > MAX_UPLOAD_SIZE_BYTES:
+            raise DatasetValidationError(
+                f"File size ({size_bytes / (1024*1024):.1f} MB) exceeds maximum allowed limit of {MAX_UPLOAD_SIZE_BYTES // (1024*1024)} MB."
+            )
+
+        file_path_obj = Path(original_filename)
+        ext = file_path_obj.suffix.lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            raise DatasetValidationError(
+                f"Unsupported file format '{ext}'. Allowed formats: {', '.join(sorted(ALLOWED_EXTENSIONS))}."
+            )
+
+        # Validate magic header
+        with open(raw_file_path, "rb") as f:
+            header_sample = f.read(1024)
+            self._validate_file_signature(header_sample, ext)
+
+        dataset_id = f"ds_{uuid.uuid4().hex[:8]}"
+        dataset_dir = self.upload_dir / dataset_id
+        bronze_dir = dataset_dir / "bronze"
+        silver_dir = dataset_dir / "silver"
+        gold_dir = dataset_dir / "gold"
+
+        for d in (bronze_dir, silver_dir, gold_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+        bronze_raw_path = bronze_dir / f"raw{ext}"
+        if bronze_raw_path.exists():
+            bronze_raw_path.unlink()
+        shutil.move(str(raw_file_path), str(bronze_raw_path))
+
+        silver_parquet_path = silver_dir / "data.parquet"
+        conv_info = convert_to_silver_parquet(
+            source_path=bronze_raw_path,
+            target_parquet_path=silver_parquet_path,
+        )
+        row_count = conv_info["row_count"]
+        col_count = conv_info["column_count"]
+
+        profile_report = DataProfiler.profile_parquet_file(silver_parquet_path)
+        profile_path = dataset_dir / "profile.json"
+        with open(profile_path, "w", encoding="utf-8") as f:
+            f.write(profile_report.model_dump_json(indent=2))
+
+        has_text_cols = any(col.is_text for col in profile_report.columns)
+        safe_name = self.sanitize_column_name(file_path_obj.stem)
+        table_name = f"user_{safe_name}" if not safe_name.startswith("user_") else safe_name
+        manifest = self._read_manifest()
+        existing_tables = {d.get("table_name") for d in manifest.values()}
+        if table_name in existing_tables:
+            table_name = f"{table_name}_{dataset_id[-4:]}"
+
+        duration_sec = round(time.perf_counter() - t0, 3)
+
+        metadata = DatasetMetadata(
+            dataset_id=dataset_id,
+            name=file_path_obj.name,
+            filename=original_filename,
+            file_format=ext.lstrip("."),
+            size_bytes=size_bytes,
+            row_count=row_count,
+            column_count=col_count,
+            table_name=table_name,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            storage_path=bronze_raw_path.as_posix(),
+            parquet_path=silver_parquet_path.as_posix(),
+            bronze_path=bronze_raw_path.as_posix(),
+            silver_path=silver_parquet_path.as_posix(),
+            gold_path=silver_parquet_path.as_posix(),
+            processing_duration_sec=duration_sec,
+            status="ready",
+            has_text_indexed=has_text_cols,
+            is_demo=False,
+            tables=[table_name],
+        )
+
+        manifest[dataset_id] = metadata.model_dump()
+        self._write_manifest(manifest)
+
+        logger.info(
+            "Successfully streamed user dataset '%s' (id=%s, rows=%d, cols=%d, table=%s, duration=%.2fs)",
+            original_filename,
+            dataset_id,
+            row_count,
+            col_count,
+            table_name,
+            duration_sec,
+        )
         return metadata
 
     def delete_dataset(self, dataset_id: str) -> bool:
@@ -339,15 +484,17 @@ class DatasetManager:
         return True
 
     def register_all_in_duckdb(self, duckdb_conn: Any) -> None:
-        """Register all user datasets in DuckDB using in-memory DataFrame registration."""
+        """Register all user datasets in DuckDB using zero-copy Parquet views."""
         manifest = self._read_manifest()
         for ds_id, data in manifest.items():
             try:
                 parquet_path = Path(data.get("parquet_path", ""))
                 table_name = data.get("table_name", f"tbl_{ds_id}")
                 if parquet_path.exists():
-                    df = pd.read_parquet(parquet_path)
-                    duckdb_conn.register(table_name, df)
+                    posix_path = parquet_path.as_posix()
+                    duckdb_conn.execute(
+                        f'CREATE OR REPLACE VIEW "{table_name}" AS SELECT * FROM read_parquet(\'{posix_path}\');'
+                    )
             except Exception as e:
                 logger.error("Failed registering dataset %s into DuckDB: %s", ds_id, e)
 

@@ -140,32 +140,29 @@ class SafeSQLNode:
         logger.info("Reset DuckDB connections for fresh data ingestion.")
 
     def _get_connection(self) -> Any:
-        """Initialize or return the DuckDB connection with tables registered and external access locked."""
+        """Initialize or return the DuckDB connection with zero-copy views and resource boundaries."""
         if self._conn is None:
             import duckdb
+            import os
 
-            # Create in-memory connection with resource boundaries
+            max_memory = os.getenv("DUCKDB_MAX_MEMORY", "4GB")
+            threads = min(os.cpu_count() or 4, 8)
+
+            # Create in-memory connection with scalable resource boundaries
             self._conn = duckdb.connect(
                 database=":memory:",
                 config={
-                    "max_memory": "512MB",
-                    "threads": 2,
+                    "max_memory": max_memory,
+                    "threads": threads,
                 },
             )
-            # Register lakehouse tables from Parquet/JSON into memory (or fallback mock schema)
+            # Register lakehouse tables from Parquet/JSON as zero-copy views
             self._register_views()
-
-            # Now permanently disable external filesystem/network operations and lock configuration
-            try:
-                self._conn.execute("SET enable_external_access = false;")
-                self._conn.execute("SET lock_configuration = true;")
-            except Exception as exc:
-                logger.warning("Could not lock DuckDB configuration: %s", exc)
 
         return self._conn
 
     def _register_views(self) -> None:
-        """Register products, orders, and customers tables in DuckDB memory."""
+        """Register products, orders, and customers tables in DuckDB as zero-copy views."""
         conn = self._conn
         gold_parquet = self.data_dir / "gold" / "products.parquet"
         silver_parquet = self.data_dir / "silver" / "orders.parquet"
@@ -175,13 +172,14 @@ class SafeSQLNode:
         silver_json = self.data_dir / "silver" / "orders.json"
         customers_json = self.data_dir / "silver" / "customers.json"
 
-        # Register products
+        # Register products as view
         if gold_parquet.exists():
-            conn.execute(f"CREATE TABLE products AS SELECT * FROM read_parquet('{gold_parquet.as_posix()}')")
+            conn.execute(f"CREATE OR REPLACE VIEW products AS SELECT * FROM read_parquet('{gold_parquet.as_posix()}');")
         elif gold_json.exists():
-            conn.execute(f"CREATE TABLE products AS SELECT * FROM read_json_auto('{gold_json.as_posix()}')")
+            conn.execute(f"CREATE OR REPLACE VIEW products AS SELECT * FROM read_json_auto('{gold_json.as_posix()}');")
         else:
             conn.execute("""
+                DROP VIEW IF EXISTS products;
                 DROP TABLE IF EXISTS products;
                 CREATE TABLE products (
                     product_id VARCHAR PRIMARY KEY, name VARCHAR, category VARCHAR, description VARCHAR,
@@ -194,13 +192,14 @@ class SafeSQLNode:
                 ('PROD-00003', 'UltraClean Air Purifier', 'Home & Garden', 'HEPA filter purifier', 'Weight: 4.5kg', 199.99, 4.8, 89, 'SKU-003', true, 'Online Exclusive');
             """)
 
-        # Register orders
+        # Register orders as view
         if silver_parquet.exists():
-            conn.execute(f"CREATE TABLE orders AS SELECT * FROM read_parquet('{silver_parquet.as_posix()}')")
+            conn.execute(f"CREATE OR REPLACE VIEW orders AS SELECT * FROM read_parquet('{silver_parquet.as_posix()}');")
         elif silver_json.exists():
-            conn.execute(f"CREATE TABLE orders AS SELECT * FROM read_json_auto('{silver_json.as_posix()}')")
+            conn.execute(f"CREATE OR REPLACE VIEW orders AS SELECT * FROM read_json_auto('{silver_json.as_posix()}');")
         else:
             conn.execute("""
+                DROP VIEW IF EXISTS orders;
                 DROP TABLE IF EXISTS orders;
                 CREATE TABLE orders (
                     order_id VARCHAR PRIMARY KEY, customer_id VARCHAR, product_id VARCHAR, product_name VARCHAR,
@@ -213,13 +212,14 @@ class SafeSQLNode:
                 ('ORD-00003', 'CUST-003', 'PROD-00003', 'UltraClean Air Purifier', 1, 199.99, 'returned', '2026-03-01T09:15:00', 'credit_card', 'standard', 1);
             """)
 
-        # Register customers
+        # Register customers as view
         if customers_parquet.exists():
-            conn.execute(f"CREATE TABLE customers AS SELECT * FROM read_parquet('{customers_parquet.as_posix()}')")
+            conn.execute(f"CREATE OR REPLACE VIEW customers AS SELECT * FROM read_parquet('{customers_parquet.as_posix()}');")
         elif customers_json.exists():
-            conn.execute(f"CREATE TABLE customers AS SELECT * FROM read_json_auto('{customers_json.as_posix()}')")
+            conn.execute(f"CREATE OR REPLACE VIEW customers AS SELECT * FROM read_json_auto('{customers_json.as_posix()}');")
         else:
             conn.execute("""
+                DROP VIEW IF EXISTS customers;
                 DROP TABLE IF EXISTS customers;
                 CREATE TABLE customers (
                     customer_id VARCHAR PRIMARY KEY, tier VARCHAR, total_orders INTEGER,
@@ -231,7 +231,7 @@ class SafeSQLNode:
                 ('CUST-000003', 'Platinum', 110, 15400.75, '2021-01-10T09:15:00', 'Electronics');
             """)
 
-        # Register any user-uploaded datasets into DuckDB
+        # Register any user-uploaded datasets into DuckDB as views
         try:
             from backend.dataset.manager import get_dataset_manager
             get_dataset_manager().register_all_in_duckdb(conn)
@@ -245,85 +245,17 @@ class SafeSQLNode:
         allowed_columns: set[str] | None = None,
     ) -> str:
         """
-        Enforce strict read-only, table-allowlisted, and column-allowlisted execution security.
+        Enforce strict read-only, table-allowlisted, and column-allowlisted execution security via SQL AST.
         """
         target_tables = set(allowed_tables) if allowed_tables is not None else ALLOWED_TABLES
         target_columns = set(allowed_columns) if allowed_columns is not None else ALL_ALLOWED_COLUMNS
-
-        # 1. Strip SQL comments (both inline -- and block /* ... */)
-        cleaned = re.sub(r"--.*?$", " ", sql, flags=re.MULTILINE)
-        cleaned = re.sub(r"/\*[\s\S]*?\*/", " ", cleaned).strip().rstrip(";")
-
-        # 2. Prevent multi-statement query chaining
-        if ";" in cleaned:
-            raise SQLValidationError("Multiple statements are forbidden.")
-
-        # 3. Strip single-quoted string literals so literal values are not mistaken for column identifiers
-        no_strings = re.sub(r"'(?:''|[^'])*'", "''", cleaned)
-
-        # 4. Strip quoted identifier delimiters for uniform token inspection
-        normalized = re.sub(r'["`]', "", no_strings)
-
-        # 5. Extract CTE aliases if query starts with WITH
-        cte_names: set[str] = set()
-        cte_col_aliases: set[str] = set()
-        cte_matches = re.finditer(r"(?:with|,)\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*\(([^)]+)\))?\s+as\s*\(", normalized, re.IGNORECASE)
-        for m in cte_matches:
-            cte_names.add(m.group(1).lower())
-            if m.group(2):
-                for col in re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", m.group(2).lower()):
-                    cte_col_aliases.add(col)
-
-        # 6. Extract word tokens
-        tokens = re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", normalized.lower())
-        if not tokens or tokens[0] not in ("select", "with"):
-            raise SQLValidationError("Only SELECT or read-only WITH queries are allowed.")
-
-        # 7. Check disallowed keywords and dangerous functions
-        for token in tokens:
-            if token in DISALLOWED_KEYWORDS:
-                raise SQLValidationError(f"Disallowed keyword or function detected: '{token}'")
-
-        # 8. Table allowlist validation: verify tables following FROM and JOIN
-        found_tables: set[str] = set()
-        aliases: set[str] = set(cte_names) | cte_col_aliases
-        permitted_tables = target_tables | cte_names
-
-        for i, token in enumerate(tokens):
-            if token in ("from", "join") and i + 1 < len(tokens):
-                tbl = tokens[i + 1]
-                if tbl in ("select", "with", "unnest", "values"):
-                    continue
-                if tbl not in permitted_tables:
-                    raise SQLValidationError(f"Table '{tbl}' is not permitted.")
-                found_tables.add(tbl)
-                # Next token might be an alias: e.g. FROM products p or JOIN orders o
-                if i + 2 < len(tokens) and tokens[i + 2] not in ("where", "join", "left", "right", "inner", "outer", "on", "group", "order", "limit"):
-                    aliases.add(tokens[i + 2])
-
-            if token == "as" and i + 1 < len(tokens):
-                aliases.add(tokens[i + 1])
-
-        if not found_tables:
-            matched = [tbl for tbl in permitted_tables if tbl in tokens]
-            if not matched:
-                raise SQLValidationError("Query does not reference an allowlisted table.")
-
-        # 9. Comprehensive Column & Identifier allowlisting
-        allowed_lookup = target_columns | target_tables | ALLOWED_SQL_KEYWORDS | ALLOWED_FUNCTIONS | aliases
-        for token in tokens:
-            if token not in allowed_lookup:
-                raise SQLValidationError(f"Column or identifier '{token}' is not permitted in analytical queries.")
-
-        # 10. Enforce row limit
-        if "limit" not in tokens:
-            cleaned += " LIMIT 50"
-        else:
-            limit_match = re.search(r"limit\s+(\d+)", cleaned, re.IGNORECASE)
-            if limit_match and int(limit_match.group(1)) > 50:
-                cleaned = re.sub(r"limit\s+\d+", "LIMIT 50", cleaned, flags=re.IGNORECASE)
-
-        return cleaned
+        from backend.rag.nodes.sql_validator import SQLASTValidator
+        return SQLASTValidator.validate(
+            sql=sql,
+            allowed_tables=target_tables,
+            allowed_columns=target_columns,
+            max_limit=50,
+        )
 
     async def __call__(self, state: RAGState) -> dict[str, Any]:
         """Generate and execute SQL query for structured analytical questions."""

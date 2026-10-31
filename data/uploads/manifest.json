@@ -34,5 +34,77 @@
     "tables": [
       "user_test"
     ]
+  },
+  "ds_5bfea4fe": {
+    "dataset_id": "ds_5bfea4fe",
+    "name": "finance_data.csv",
+    "filename": "finance_data.csv",
+    "file_format": "csv",
+    "size_bytes": 42,
+    "row_count": 2,
+    "column_count": 3,
+    "table_name": "user_finance_data_a4fe",
+    "created_at": "2026-10-31T09:24:33.971315+00:00",
+    "storage_path": "data/uploads/ds_5bfea4fe/bronze/raw.csv",
+    "parquet_path": "data/uploads/ds_5bfea4fe/silver/data.parquet",
+    "bronze_path": "data/uploads/ds_5bfea4fe/bronze/raw.csv",
+    "silver_path": "data/uploads/ds_5bfea4fe/silver/data.parquet",
+    "gold_path": "data/uploads/ds_5bfea4fe/silver/data.parquet",
+    "processing_duration_sec": 0.113,
+    "status": "ready",
+    "data_quality_score": 100.0,
+    "has_text_indexed": false,
+    "is_demo": false,
+    "tables": [
+      "user_finance_data_a4fe"
+    ]
+  },
+  "ds_b499614a": {
+    "dataset_id": "ds_b499614a",
+    "name": "finance_data.csv",
+    "filename": "finance_data.csv",
+    "file_format": "csv",
+    "size_bytes": 42,
+    "row_count": 2,
+    "column_count": 3,
+    "table_name": "user_finance_data_614a",
+    "created_at": "2026-10-31T09:29:05.191872+00:00",
+    "storage_path": "data/uploads/ds_b499614a/bronze/raw.csv",
+    "parquet_path": "data/uploads/ds_b499614a/silver/data.parquet",
+    "bronze_path": "data/uploads/ds_b499614a/bronze/raw.csv",
+    "silver_path": "data/uploads/ds_b499614a/silver/data.parquet",
+    "gold_path": "data/uploads/ds_b499614a/silver/data.parquet",
+    "processing_duration_sec": 0.128,
+    "status": "ready",
+    "data_quality_score": 100.0,
+    "has_text_indexed": false,
+    "is_demo": false,
+    "tables": [
+      "user_finance_data_614a"
+    ]
+  },
+  "ds_6cec028d": {
+    "dataset_id": "ds_6cec028d",
+    "name": "dataset_a.csv",
+    "filename": "dataset_a.csv",
+    "file_format": "csv",
+    "size_bytes": 20,
+    "row_count": 1,
+    "column_count": 2,
+    "table_name": "user_dataset_a",
+    "created_at": "2026-10-31T09:29:06.545351+00:00",
+    "storage_path": "data/uploads/ds_6cec028d/bronze/raw.csv",
+    "parquet_path": "data/uploads/ds_6cec028d/silver/data.parquet",
+    "bronze_path": "data/uploads/ds_6cec028d/bronze/raw.csv",
+    "silver_path": "data/uploads/ds_6cec028d/silver/data.parquet",
+    "gold_path": "data/uploads/ds_6cec028d/silver/data.parquet",
+    "processing_duration_sec": 0.105,
+    "status": "ready",
+    "data_quality_score": 100.0,
+    "has_text_indexed": false,
+    "is_demo": false,
+    "tables": [
+      "user_dataset_a"
+    ]
   }
 }

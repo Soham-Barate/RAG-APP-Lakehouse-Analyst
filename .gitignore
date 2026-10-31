@@ -45,6 +45,7 @@ docker-compose.override.yml
 data/raw/*.parquet
 data/raw/*.csv
 data/iceberg/
+data/jobs/
 data/uploads/*/
 data/uploads/*.csv
 data/uploads/*.parquet

@@ -148,9 +148,18 @@ def create_app() -> FastAPI:
 
     # ----- Routes -----
     @app.get("/", include_in_schema=False)
-    async def root() -> RedirectResponse:
-        """Redirect root URL to interactive Swagger API documentation."""
-        return RedirectResponse(url="/docs")
+    async def root() -> dict[str, str]:
+        """Root API metadata and operational endpoint index."""
+        return {
+            "name": "RAG Lakehouse Analyst API",
+            "version": "1.0.0",
+            "status": "healthy",
+            "docs": "/docs",
+            "health": f"{API_V1_PREFIX}/health",
+            "chat": f"{API_V1_PREFIX}/chat",
+            "datasets": f"{API_V1_PREFIX}/datasets",
+            "engine": "DuckDB OLAP + pgvector RAG (Medallion Architecture)",
+        }
 
     app.include_router(health.router, prefix=API_V1_PREFIX)
     app.include_router(chat.router, prefix=API_V1_PREFIX)

@@ -7,14 +7,15 @@ from __future__ import annotations
 
 import html
 import io
+import os
 from typing import Any
 
 import httpx
 import pandas as pd
 import streamlit as st
 
-BACKEND_URL = "http://127.0.0.1:8000"
-API_KEY = "dev-key-1"
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+API_KEY = os.getenv("API_KEY", "dev-key-1")
 
 
 def fetch_datasets() -> list[dict[str, Any]]:
@@ -52,6 +53,17 @@ def fetch_dataset_detail(dataset_id: str) -> dict[str, Any] | None:
     return None
 
 
+def fetch_jobs(limit: int = 5) -> list[dict[str, Any]]:
+    """Fetch recent asynchronous dataset jobs from backend API."""
+    try:
+        resp = httpx.get(f"{BACKEND_URL}/api/v1/datasets/jobs?limit={limit}", timeout=5.0)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return []
+
+
 def upload_dataset_file(uploaded_file: Any) -> tuple[bool, str, dict[str, Any] | None]:
     """Upload a file to the backend dataset ingestion endpoint."""
     try:
@@ -63,12 +75,12 @@ def upload_dataset_file(uploaded_file: Any) -> tuple[bool, str, dict[str, Any] |
             f"{BACKEND_URL}/api/v1/datasets/upload",
             files=files,
             headers=headers,
-            timeout=60.0,
+            timeout=300.0,
         )
 
         if resp.status_code == 200:
             data = resp.json()
-            return True, "Dataset uploaded and profiled successfully.", data
+            return True, "Dataset uploaded, converted to Silver Parquet, and profiled successfully.", data
         else:
             try:
                 err = resp.json()
@@ -138,7 +150,7 @@ def render_dataset_manager() -> None:
         with st.container(border=True):
             st.markdown(
                 '<div style="font-size:0.8125rem; color:var(--text-secondary); margin-bottom:0.75rem;">'
-                'Supported Formats: <code>.csv</code>, <code>.xlsx</code>, <code>.parquet</code>, <code>.json</code> (Max: 50MB)'
+                'Supported Formats: <code>.csv</code>, <code>.parquet</code>, <code>.xlsx</code>, <code>.json</code> (Max: 5 GB Bounded Streaming)'
                 '</div>',
                 unsafe_allow_html=True,
             )
@@ -225,11 +237,35 @@ def render_dataset_manager() -> None:
                             else:
                                 st.error(msg)
 
+        # Recent Async Jobs
+        recent_jobs = fetch_jobs(limit=5)
+        if recent_jobs:
+            st.markdown(
+                '<div style="font-size:0.75rem; font-family:var(--font-mono); color:var(--text-muted); '
+                'text-transform:uppercase; letter-spacing:0.05em; margin:1.5rem 0 0.5rem 0;">'
+                '3. RECENT INGESTION & GENERATION JOBS</div>',
+                unsafe_allow_html=True,
+            )
+            for j in recent_jobs:
+                j_stat = j.get("status", "unknown")
+                badge_color = "#34d399" if j_stat == "completed" else ("#f87171" if j_stat == "failed" else "#38bdf8")
+                with st.container(border=True):
+                    st.markdown(
+                        f'<div style="display:flex; justify-content:space-between; align-items:center;">'
+                        f'<span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-primary); font-weight:600;">{j.get("job_id", "")}</span>'
+                        f'<span style="font-family:var(--font-mono); font-size:0.625rem; color:{badge_color}; text-transform:uppercase; border:1px solid {badge_color}40; padding:1px 5px; border-radius:3px;">{j_stat}</span>'
+                        f'</div>'
+                        f'<div style="font-size:0.6875rem; color:var(--text-secondary); margin-top:0.25rem;">'
+                        f'Type: <code>{j.get("job_type", "")}</code> &bull; Rows: {j.get("rows_processed", 0):,} &bull; Duration: {j.get("duration_sec", 0.0):.2f}s'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
     with col_right:
         st.markdown(
             '<div style="font-size:0.75rem; font-family:var(--font-mono); color:var(--text-muted); '
             'text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.5rem;">'
-            '3. DATA QUALITY PROFILE & AUDIT</div>',
+            'DATA QUALITY PROFILE & AUDIT</div>',
             unsafe_allow_html=True,
         )
 
