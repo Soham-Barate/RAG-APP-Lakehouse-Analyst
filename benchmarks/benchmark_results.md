@@ -1,6 +1,6 @@
 # RAG Lakehouse Analyst — Performance & Scalability Benchmark Report
 
-**Execution Timestamp:** 2026-10-31 15:41:31
+**Execution Timestamp:** 2026-10-31 16:47:05
 **Environment:** Windows 10 | Python 3.11.9
 **CPU Architecture:** Intel64 Family 6 Model 154 Stepping 3, GenuineIntel
 
@@ -16,8 +16,8 @@ All large-scale operations stream directly to columnar Apache Parquet with zero-
 
 | Pipeline Stage | Scale | Rows Processed | Duration | Throughput | Parquet Size | Peak Memory (RSS) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| Synthetic Generation (medium) | `medium` | 2,000,000 | 36.50s | 54,788 rows/s | 47.06 MB | 118.9 MB |
-| DuckDB Streaming Profiler | `active` | 2,000,000 | 1.86s | 25.3 MB/s | 47.06 MB | 132.6 MB |
+| Synthetic Generation (quick) | `quick` | 50,000 | 7.22s | 6,926 rows/s | 0.81 MB | 135.2 MB |
+| DuckDB Streaming Profiler | `active` | 50,000 | 4.06s | 0.2 MB/s | 0.81 MB | 135.2 MB |
 
 ---
 
@@ -25,18 +25,18 @@ All large-scale operations stream directly to columnar Apache Parquet with zero-
 
 | Analytical Workload | Cold Latency | P50 (Median) | P90 | P99 (Peak) | Min Latency |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Orders Status Aggregation (Group By)** | 62.38 ms | 73.05 ms | 132.29 ms | 132.29 ms | 46.92 ms |
-| **Two-Table Analytical Join (Orders + Products)** | 769.28 ms | 510.91 ms | 731.98 ms | 731.98 ms | 231.86 ms |
-| **Filtered High-Value Multi-Dimension Aggregation** | 95.93 ms | 83.63 ms | 97.87 ms | 97.87 ms | 73.74 ms |
+| **Orders Status Aggregation (Group By)** | 34.08 ms | 33.53 ms | 85.51 ms | 85.51 ms | 20.16 ms |
+| **Two-Table Analytical Join (Orders + Products)** | 74.22 ms | 50.42 ms | 118.15 ms | 118.15 ms | 27.99 ms |
+| **Filtered High-Value Multi-Dimension Aggregation** | 13.70 ms | 9.53 ms | 11.18 ms | 11.18 ms | 7.92 ms |
 
 ---
 
 ## 4. SQL AST Security Validation Throughput (`sqlglot`)
 
 - **Total Statements Validated:** 1,000
-- **Total Validation Time:** 2.737 seconds
-- **Average Validation Latency:** 2737.0 microseconds per query
-- **Validation Throughput:** 365 queries/sec (Zero noticeable overhead)
+- **Total Validation Time:** 1.926 seconds
+- **Average Validation Latency:** 1926.4 microseconds per query
+- **Validation Throughput:** 519 queries/sec (Zero noticeable overhead)
 
 ---
 

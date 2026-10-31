@@ -106,5 +106,29 @@
     "tables": [
       "user_dataset_a"
     ]
+  },
+  "ds_dc1ef300": {
+    "dataset_id": "ds_dc1ef300",
+    "name": "finance_data.csv",
+    "filename": "finance_data.csv",
+    "file_format": "csv",
+    "size_bytes": 42,
+    "row_count": 2,
+    "column_count": 3,
+    "table_name": "user_finance_data_f300",
+    "created_at": "2026-10-31T10:42:51.385620+00:00",
+    "storage_path": "data/uploads/ds_dc1ef300/bronze/raw.csv",
+    "parquet_path": "data/uploads/ds_dc1ef300/silver/data.parquet",
+    "bronze_path": "data/uploads/ds_dc1ef300/bronze/raw.csv",
+    "silver_path": "data/uploads/ds_dc1ef300/silver/data.parquet",
+    "gold_path": "data/uploads/ds_dc1ef300/silver/data.parquet",
+    "processing_duration_sec": 0.218,
+    "status": "ready",
+    "data_quality_score": 100.0,
+    "has_text_indexed": false,
+    "is_demo": false,
+    "tables": [
+      "user_finance_data_f300"
+    ]
   }
 }

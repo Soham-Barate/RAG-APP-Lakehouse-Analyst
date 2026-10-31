@@ -58,11 +58,69 @@ class JobRecord:
 
 
 class JobManager:
-    """Manages persistent lifecycle of asynchronous background ingestion jobs."""
+    """Manages persistent lifecycle of asynchronous background ingestion jobs with crash recovery."""
 
     def __init__(self, storage_dir: Path = JOBS_DIR) -> None:
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self._active_dataset_locks: set[str] = set()
+        self.recover_stale_jobs()
+
+    def recover_stale_jobs(self) -> int:
+        """
+        Detect and mark jobs that were running when the process terminated.
+        Prevents zombie jobs from appearing indefinitely in progress.
+        """
+        recovered_count = 0
+        for file in self.storage_dir.glob("*.json"):
+            try:
+                with open(file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if data.get("status") == "running":
+                    data["status"] = "failed"
+                    data["stage"] = JobStage.FAILED.value
+                    data["error"] = "Job interrupted: process restarted or crashed unexpectedly."
+                    data["message"] = "Interrupted by process restart."
+                    data["end_time"] = time.time()
+                    data["duration_sec"] = round(data["end_time"] - data.get("start_time", data["end_time"]), 2)
+                    temp = file.with_suffix(".tmp")
+                    with open(temp, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2)
+                    temp.replace(file)
+                    recovered_count += 1
+            except Exception as exc:
+                logger.error("Error inspecting job file %s during recovery: %s", file, exc)
+
+        if recovered_count > 0:
+            logger.warning("Recovered %d stale background jobs after process startup.", recovered_count)
+        return recovered_count
+
+    def acquire_dataset_lock(self, dataset_id: str) -> bool:
+        """Acquire in-flight processing lock for a dataset to prevent race conditions."""
+        if dataset_id in self._active_dataset_locks:
+            return False
+        self._active_dataset_locks.add(dataset_id)
+        return True
+
+    def release_dataset_lock(self, dataset_id: str) -> None:
+        """Release in-flight processing lock for a dataset."""
+        self._active_dataset_locks.discard(dataset_id)
+
+    def cancel_job(self, job_id: str) -> bool:
+        """Explicitly cancel an in-flight background job."""
+        job = self.get_job(job_id)
+        if not job or job.status != "running":
+            return False
+        job.stage = JobStage.CANCELLED.value
+        job.status = "failed"
+        job.error = "Job cancelled by user request."
+        job.message = "Cancelled by user."
+        job.end_time = time.time()
+        job.duration_sec = round(job.end_time - job.start_time, 2)
+        self.save_job(job)
+        self.release_dataset_lock(job.dataset_id)
+        logger.info("Job %s cancelled.", job_id)
+        return True
 
     def _job_file(self, job_id: str) -> Path:
         return self.storage_dir / f"{job_id}.json"

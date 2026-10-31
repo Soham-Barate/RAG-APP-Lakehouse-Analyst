@@ -260,6 +260,15 @@ class SyntheticDataGenerator:
         )
 
         if progress_cb:
+            progress_cb("Computing Gold medallion analytical models...", 0.75)
+        self._build_gold_analytical_layers(
+            orders_parquet=orders_parquet,
+            products_parquet=products_parquet,
+            customers_parquet=customers_parquet,
+            gold_dir=self.output_dir / "gold",
+        )
+
+        if progress_cb:
             progress_cb("Generating reviews and support tickets...", 0.85)
         reviews = self._generate_reviews(cfg["reviews"], products, customers)
         tickets = self._generate_tickets(cfg["tickets"], products, customers)
@@ -359,6 +368,86 @@ class SyntheticDataGenerator:
         path.parent.mkdir(parents=True, exist_ok=True)
         table = pa.Table.from_pylist(records, schema=schema)
         pq.write_table(table, path, compression="snappy")
+
+    def _build_gold_analytical_layers(
+        self,
+        orders_parquet: Path,
+        products_parquet: Path,
+        customers_parquet: Path,
+        gold_dir: Path,
+    ) -> None:
+        """
+        Materialize high-performance Gold analytical tables using DuckDB SQL.
+        Pre-aggregates metrics into daily_revenue, category_metrics, and customer_lifetime_value.
+        """
+        import duckdb
+        gold_dir.mkdir(parents=True, exist_ok=True)
+        con = duckdb.connect(":memory:")
+        try:
+            o_path = orders_parquet.as_posix()
+            p_path = products_parquet.as_posix()
+            c_path = customers_parquet.as_posix()
+
+            # 1. Daily Revenue Aggregates
+            daily_rev_path = (gold_dir / "daily_revenue.parquet").as_posix()
+            con.execute(f"""
+                COPY (
+                    SELECT 
+                        CAST(order_date AS DATE) AS order_date,
+                        status,
+                        payment_method,
+                        COUNT(1) AS total_orders,
+                        SUM(quantity) AS total_items,
+                        ROUND(SUM(total_amount), 2) AS daily_revenue,
+                        ROUND(AVG(total_amount), 2) AS avg_order_value
+                    FROM read_parquet('{o_path}')
+                    GROUP BY 1, 2, 3
+                    ORDER BY 1 DESC
+                ) TO '{daily_rev_path}' (FORMAT PARQUET, COMPRESSION 'snappy');
+            """)
+
+            # 2. Category Metrics Aggregates
+            cat_metrics_path = (gold_dir / "category_metrics.parquet").as_posix()
+            con.execute(f"""
+                COPY (
+                    SELECT 
+                        p.category,
+                        COUNT(DISTINCT p.product_id) AS product_count,
+                        COUNT(o.order_id) AS total_orders,
+                        COALESCE(SUM(o.quantity), 0) AS total_units_sold,
+                        ROUND(COALESCE(SUM(o.total_amount), 0), 2) AS total_revenue,
+                        ROUND(AVG(p.price), 2) AS avg_price,
+                        ROUND(AVG(p.rating), 2) AS avg_rating
+                    FROM read_parquet('{p_path}') p
+                    LEFT JOIN read_parquet('{o_path}') o ON p.product_id = o.product_id
+                    GROUP BY 1
+                    ORDER BY total_revenue DESC
+                ) TO '{cat_metrics_path}' (FORMAT PARQUET, COMPRESSION 'snappy');
+            """)
+
+            # 3. Customer Lifetime Value (CLV)
+            clv_path = (gold_dir / "customer_lifetime_value.parquet").as_posix()
+            con.execute(f"""
+                COPY (
+                    SELECT 
+                        c.customer_id,
+                        c.tier,
+                        c.preferred_category,
+                        COUNT(o.order_id) AS order_count,
+                        ROUND(COALESCE(SUM(o.total_amount), 0), 2) AS lifetime_spent,
+                        ROUND(COALESCE(AVG(o.total_amount), 0), 2) AS avg_order_value,
+                        MAX(o.order_date) AS last_order_date
+                    FROM read_parquet('{c_path}') c
+                    LEFT JOIN read_parquet('{o_path}') o ON c.customer_id = o.customer_id
+                    GROUP BY 1, 2, 3
+                    ORDER BY lifetime_spent DESC
+                ) TO '{clv_path}' (FORMAT PARQUET, COMPRESSION 'snappy');
+            """)
+            logger.info("Successfully materialized Gold analytical Parquet layers.")
+        except Exception as e:
+            logger.error("Failed building Gold analytical layers: %s", e)
+        finally:
+            con.close()
 
     def _generate_products(self, count: int) -> list[dict[str, Any]]:
         """Generate product catalog."""

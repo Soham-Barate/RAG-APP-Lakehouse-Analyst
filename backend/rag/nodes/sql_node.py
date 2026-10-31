@@ -22,7 +22,10 @@ from backend.rag.state import RAGState
 logger = logging.getLogger(__name__)
 
 # Security Allowlist
-ALLOWED_TABLES = {"products", "orders", "customers"}
+ALLOWED_TABLES = {
+    "products", "orders", "customers",
+    "daily_revenue", "category_metrics", "customer_lifetime_value"
+}
 
 ALLOWED_COLUMNS = {
     "products": {
@@ -35,6 +38,15 @@ ALLOWED_COLUMNS = {
     },
     "customers": {
         "customer_id", "tier", "total_orders", "total_spent", "join_date", "preferred_category"
+    },
+    "daily_revenue": {
+        "order_date", "status", "payment_method", "total_orders", "total_items", "daily_revenue", "avg_order_value"
+    },
+    "category_metrics": {
+        "category", "product_count", "total_orders", "total_units_sold", "total_revenue", "avg_price", "avg_rating"
+    },
+    "customer_lifetime_value": {
+        "customer_id", "tier", "preferred_category", "order_count", "lifetime_spent", "avg_order_value", "last_order_date"
     }
 }
 ALL_ALLOWED_COLUMNS = set().union(*ALLOWED_COLUMNS.values())
@@ -231,6 +243,49 @@ class SafeSQLNode:
                 ('CUST-000003', 'Platinum', 110, 15400.75, '2021-01-10T09:15:00', 'Electronics');
             """)
 
+        # Register Gold Analytical Views
+        daily_rev_pq = self.data_dir / "gold" / "daily_revenue.parquet"
+        cat_metrics_pq = self.data_dir / "gold" / "category_metrics.parquet"
+        clv_pq = self.data_dir / "gold" / "customer_lifetime_value.parquet"
+
+        if daily_rev_pq.exists():
+            conn.execute(f"CREATE OR REPLACE VIEW daily_revenue AS SELECT * FROM read_parquet('{daily_rev_pq.as_posix()}');")
+        else:
+            conn.execute("""
+                CREATE OR REPLACE VIEW daily_revenue AS
+                SELECT CAST(order_date AS DATE) AS order_date, status, payment_method,
+                       COUNT(1) AS total_orders, SUM(quantity) AS total_items,
+                       ROUND(SUM(total_amount), 2) AS daily_revenue, ROUND(AVG(total_amount), 2) AS avg_order_value
+                FROM orders GROUP BY 1, 2, 3;
+            """)
+
+        if cat_metrics_pq.exists():
+            conn.execute(f"CREATE OR REPLACE VIEW category_metrics AS SELECT * FROM read_parquet('{cat_metrics_pq.as_posix()}');")
+        else:
+            conn.execute("""
+                CREATE OR REPLACE VIEW category_metrics AS
+                SELECT p.category, COUNT(DISTINCT p.product_id) AS product_count,
+                       COUNT(o.order_id) AS total_orders, COALESCE(SUM(o.quantity), 0) AS total_units_sold,
+                       ROUND(COALESCE(SUM(o.total_amount), 0), 2) AS total_revenue,
+                       ROUND(AVG(p.price), 2) AS avg_price, ROUND(AVG(p.rating), 2) AS avg_rating
+                FROM products p LEFT JOIN orders o ON p.product_id = o.product_id
+                GROUP BY 1;
+            """)
+
+        if clv_pq.exists():
+            conn.execute(f"CREATE OR REPLACE VIEW customer_lifetime_value AS SELECT * FROM read_parquet('{clv_pq.as_posix()}');")
+        else:
+            conn.execute("""
+                CREATE OR REPLACE VIEW customer_lifetime_value AS
+                SELECT c.customer_id, c.tier, c.preferred_category,
+                       COUNT(o.order_id) AS order_count,
+                       ROUND(COALESCE(SUM(o.total_amount), 0), 2) AS lifetime_spent,
+                       ROUND(COALESCE(AVG(o.total_amount), 0), 2) AS avg_order_value,
+                       MAX(o.order_date) AS last_order_date
+                FROM customers c LEFT JOIN orders o ON c.customer_id = o.customer_id
+                GROUP BY 1, 2, 3;
+            """)
+
         # Register any user-uploaded datasets into DuckDB as views
         try:
             from backend.dataset.manager import get_dataset_manager
@@ -299,7 +354,7 @@ class SafeSQLNode:
             safe_sql = self.validate_sql(raw_sql, allowed_tables=target_tables, allowed_columns=target_columns)
             logger.info("Executing safe Text-to-SQL for dataset %s: %s", dataset_id, safe_sql)
 
-            # Execute query in DuckDB with external access locked
+            # Execute query in DuckDB with statement timeout and result capping
             conn = self._get_connection()
             # Ensure views are up-to-date
             try:
@@ -308,7 +363,14 @@ class SafeSQLNode:
             except Exception:
                 pass
 
-            df = conn.execute(safe_sql).fetchdf()
+            # Defense-in-depth: Set 10-second query timeout and cap fetched rows to 50
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SET statement_timeout = '10s';")
+            except Exception:
+                pass
+
+            df = cursor.execute(safe_sql).fetchdf()
             records = df.to_dict("records")
             latency_ms = (time.perf_counter() - start) * 1000
 

@@ -6,11 +6,14 @@ and converts large CSV/JSON datasets to Parquet using DuckDB out-of-core engine.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
 import shutil
+import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable
 
@@ -163,7 +166,14 @@ def convert_to_silver_parquet(
                 );
             """)
         elif ext in (".xlsx", ".xls"):
-            # Excel requires pandas parsing (bounded for small files)
+            # Enforce strict 50 MB size limit on Excel due to XML ZIP decompression memory expansion
+            excel_size_mb = source_path.stat().st_size / (1024 * 1024)
+            if excel_size_mb > 50.0:
+                raise StreamingIngestionError(
+                    f"Excel ({ext}) files larger than 50 MB ({excel_size_mb:.1f} MB) are not supported "
+                    "due to XML decompression memory overhead. Please convert/export your dataset to CSV or Parquet "
+                    "for high-speed out-of-core streaming up to 5 GB."
+                )
             import pandas as pd
             df = pd.read_excel(source_path)
             con.register("raw_input", df)
@@ -238,4 +248,112 @@ def convert_to_silver_parquet(
         raise StreamingIngestionError(f"Failed converting {source_path.name} to Parquet: {exc}") from exc
     finally:
         con.close()
+
+
+TEMP_UPLOADS_DIR = Path("data/uploads/temp")
+
+
+@dataclass
+class UploadSession:
+    upload_id: str
+    filename: str
+    total_bytes: int
+    chunk_size: int
+    total_chunks: int
+    expected_checksum: str | None
+    temp_file: Path
+    bytes_received: int = 0
+    chunks_received: set[int] = field(default_factory=set)
+    created_at: float = field(default_factory=time.time)
+    hasher: Any = field(default_factory=hashlib.sha256)
+
+
+class UploadSessionManager:
+    """Manages multi-part chunked streaming uploads with checksum verification."""
+
+    def __init__(self, temp_dir: Path = TEMP_UPLOADS_DIR) -> None:
+        self.temp_dir = Path(temp_dir)
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self._sessions: dict[str, UploadSession] = {}
+
+    def init_session(
+        self,
+        filename: str,
+        total_bytes: int,
+        chunk_size: int = DEFAULT_CHUNK_SIZE_BYTES,
+        expected_checksum: str | None = None,
+    ) -> UploadSession:
+        if total_bytes > DEFAULT_MAX_UPLOAD_BYTES:
+            raise StreamingIngestionError(
+                f"Upload size {total_bytes / (1024 * 1024):.1f} MB exceeds maximum limit of 5 GB."
+            )
+        upload_id = f"up_{uuid.uuid4().hex[:12]}"
+        temp_file = self.temp_dir / f"{upload_id}.part"
+        # Truncate/create temp file
+        with open(temp_file, "wb"):
+            pass
+
+        total_chunks = (total_bytes + chunk_size - 1) // chunk_size if total_bytes > 0 else 1
+        session = UploadSession(
+            upload_id=upload_id,
+            filename=filename,
+            total_bytes=total_bytes,
+            chunk_size=chunk_size,
+            total_chunks=total_chunks,
+            expected_checksum=expected_checksum,
+            temp_file=temp_file,
+        )
+        self._sessions[upload_id] = session
+        return session
+
+    def get_session(self, upload_id: str) -> UploadSession:
+        session = self._sessions.get(upload_id)
+        if not session:
+            raise StreamingIngestionError(f"Upload session '{upload_id}' not found or expired.")
+        return session
+
+    def append_chunk(self, upload_id: str, chunk_index: int, chunk_bytes: bytes) -> dict[str, Any]:
+        session = self.get_session(upload_id)
+        with open(session.temp_file, "ab") as f:
+            f.write(chunk_bytes)
+        session.hasher.update(chunk_bytes)
+        session.bytes_received += len(chunk_bytes)
+        session.chunks_received.add(chunk_index)
+        pct = (session.bytes_received / session.total_bytes * 100.0) if session.total_bytes > 0 else 100.0
+        return {
+            "upload_id": upload_id,
+            "chunk_index": chunk_index,
+            "bytes_received": session.bytes_received,
+            "total_bytes": session.total_bytes,
+            "progress_pct": round(pct, 1),
+            "is_complete": session.bytes_received >= session.total_bytes,
+        }
+
+    def finalize_session(self, upload_id: str, destination_path: Path) -> tuple[Path, str]:
+        session = self.get_session(upload_id)
+        if session.bytes_received != session.total_bytes:
+            raise StreamingIngestionError(
+                f"Byte count mismatch: received {session.bytes_received} of {session.total_bytes} bytes."
+            )
+        actual_checksum = session.hasher.hexdigest()
+        if session.expected_checksum and session.expected_checksum.lower() != actual_checksum.lower():
+            raise StreamingIngestionError(
+                f"SHA-256 Checksum mismatch: expected {session.expected_checksum}, calculated {actual_checksum}"
+            )
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        if destination_path.exists():
+            destination_path.unlink()
+        session.temp_file.replace(destination_path)
+        del self._sessions[upload_id]
+        return destination_path, actual_checksum
+
+
+_session_manager: UploadSessionManager | None = None
+
+
+def get_upload_session_manager() -> UploadSessionManager:
+    global _session_manager
+    if _session_manager is None:
+        _session_manager = UploadSessionManager()
+    return _session_manager
 

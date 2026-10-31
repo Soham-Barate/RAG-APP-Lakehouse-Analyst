@@ -18,6 +18,8 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
+    File,
+    Form,
     HTTPException,
     Query,
     Request,
@@ -34,7 +36,23 @@ from backend.dataset.manager import (
     get_dataset_manager,
 )
 from backend.dataset.models import DataQualityReport, DatasetMetadata
-from backend.dataset.streaming import stream_upload_file
+from backend.dataset.streaming import (
+    StreamingIngestionError,
+    get_upload_session_manager,
+    stream_upload_file,
+)
+from pydantic import BaseModel, Field
+
+
+class UploadInitRequest(BaseModel):
+    filename: str
+    total_bytes: int = Field(ge=1, le=5 * 1024 * 1024 * 1024)
+    chunk_size: int = Field(default=2 * 1024 * 1024, ge=1, le=16 * 1024 * 1024)
+    checksum_sha256: str | None = None
+
+
+class UploadFinalizeRequest(BaseModel):
+    upload_id: str
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +68,115 @@ async def list_datasets() -> list[DatasetMetadata]:
     """Retrieve all accessible datasets with row/column counts and table identifiers."""
     manager = get_dataset_manager()
     return manager.list_datasets()
+
+
+@router.post(
+    "/upload/init",
+    summary="Initialize a multi-part chunked streaming upload session",
+)
+async def init_chunked_upload(
+    payload: UploadInitRequest,
+    api_key: str = Depends(verify_api_key),
+) -> dict[str, Any]:
+    """Start a new chunked streaming upload session with size and format guardrails."""
+    ext = Path(payload.filename).suffix.lower()
+    from backend.dataset.streaming import ALLOWED_EXTENSIONS
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported format '{ext}'. Allowed: {sorted(ALLOWED_EXTENSIONS)}",
+        )
+    if ext in (".xlsx", ".xls") and payload.total_bytes > 50 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Excel (.xlsx/.xls) files are limited to 50 MB due to XML decompression limits. Please export to CSV or Parquet.",
+        )
+    session_mgr = get_upload_session_manager()
+    session = session_mgr.init_session(
+        filename=payload.filename,
+        total_bytes=payload.total_bytes,
+        chunk_size=payload.chunk_size,
+        expected_checksum=payload.checksum_sha256,
+    )
+    return {
+        "upload_id": session.upload_id,
+        "filename": session.filename,
+        "total_bytes": session.total_bytes,
+        "chunk_size": session.chunk_size,
+        "total_chunks": session.total_chunks,
+        "status": "initialized",
+    }
+
+
+@router.post(
+    "/upload/chunk",
+    summary="Upload a single binary chunk in a chunked upload session",
+)
+async def upload_file_chunk(
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    file: UploadFile = File(...),
+    api_key: str = Depends(verify_api_key),
+) -> dict[str, Any]:
+    """Append a chunk directly to disk without holding previous chunks in RAM."""
+    session_mgr = get_upload_session_manager()
+    try:
+        chunk_bytes = await file.read()
+        res = session_mgr.append_chunk(upload_id, chunk_index, chunk_bytes)
+        return res
+    except StreamingIngestionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post(
+    "/upload/finalize",
+    summary="Finalize chunked upload, verify checksum, and ingest to Silver Parquet",
+)
+async def finalize_chunked_upload(
+    request: Request,
+    payload: UploadFinalizeRequest,
+    api_key: str = Depends(verify_api_key),
+) -> dict[str, Any]:
+    """Verify complete upload assembly and trigger streaming Parquet conversion and profiling."""
+    session_mgr = get_upload_session_manager()
+    try:
+        session = session_mgr.get_session(payload.upload_id)
+    except StreamingIngestionError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    manager = get_dataset_manager()
+    temp_target = Path("data/uploads/temp") / f"final_{session.upload_id}_{session.filename}"
+
+    try:
+        final_file, sha256_hash = session_mgr.finalize_session(payload.upload_id, temp_target)
+        metadata = manager.ingest_from_disk_streaming(
+            raw_file_path=final_file,
+            original_filename=session.filename,
+        )
+    except Exception as exc:
+        if temp_target.exists():
+            try:
+                temp_target.unlink()
+            except OSError:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ingestion conversion failed: {exc}",
+        ) from exc
+    finally:
+        if temp_target.exists():
+            try:
+                temp_target.unlink()
+            except OSError:
+                pass
+
+    profile = manager.get_profiling_report(metadata.dataset_id)
+    return {
+        "success": True,
+        "metadata": metadata.model_dump(),
+        "profile": profile.model_dump() if profile else None,
+        "sha256": sha256_hash,
+    }
 
 
 @router.post(

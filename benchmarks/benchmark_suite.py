@@ -12,6 +12,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 from typing import Any
 
 # Ensure project root is in path
@@ -23,7 +24,7 @@ def get_current_rss_mb() -> float:
     """Return resident memory (Working Set) in MB."""
     try:
         import psutil
-        return psutil.Process().memory_info().rss / (1024 * 1024)
+        return round(psutil.Process().memory_info().rss / (1024 * 1024), 2)
     except Exception:
         pass
 
@@ -39,6 +40,44 @@ def get_current_rss_mb() -> float:
         return 0.0
 
 
+class ContinuousMemorySampler:
+    """Continuously samples process Working Set (RSS) during execution at 20ms resolution."""
+
+    def __init__(self, interval_sec: float = 0.02) -> None:
+        self.interval = interval_sec
+        self.start_rss: float = 0.0
+        self.peak_rss: float = 0.0
+        self.end_rss: float = 0.0
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    def _sample(self) -> float:
+        return get_current_rss_mb()
+
+    def _monitor(self) -> None:
+        while self._running:
+            cur = self._sample()
+            if cur > self.peak_rss:
+                self.peak_rss = cur
+            time.sleep(self.interval)
+
+    def __enter__(self) -> ContinuousMemorySampler:
+        self.start_rss = self._sample()
+        self.peak_rss = self.start_rss
+        self._running = True
+        self._thread = threading.Thread(target=self._monitor, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=0.5)
+        self.end_rss = self._sample()
+        if self.end_rss > self.peak_rss:
+            self.peak_rss = self.end_rss
+
+
 @dataclass
 class BenchmarkMetric:
     name: str
@@ -48,6 +87,8 @@ class BenchmarkMetric:
     throughput_rows_per_sec: float
     disk_size_mb: float
     peak_rss_mb: float
+    start_rss_mb: float = 0.0
+    end_rss_mb: float = 0.0
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -58,18 +99,20 @@ class LakehouseBenchmark:
         self.metrics: list[BenchmarkMetric] = []
 
     def run_synthetic_generation_benchmark(self, scale: str = "quick") -> BenchmarkMetric:
-        """Benchmark streaming synthetic batch generator."""
+        """Benchmark streaming synthetic batch generator with high-resolution memory sampling."""
         from ingestion.synthetic.data_generator import SCALE_CONFIGS, SyntheticDataGenerator
 
         print(f"\n[*] Running Synthetic Generation Benchmark (scale='{scale}')...")
-        rss_start = get_current_rss_mb()
         t0 = time.perf_counter()
 
-        generator = SyntheticDataGenerator(output_dir=PROJECT_ROOT / "data")
-        _ = generator.generate_all(scale=scale)
+        with ContinuousMemorySampler(interval_sec=0.02) as mem:
+            generator = SyntheticDataGenerator(output_dir=PROJECT_ROOT / "data")
+            _ = generator.generate_all(scale=scale)
 
         duration = time.perf_counter() - t0
-        rss_peak = max(get_current_rss_mb(), rss_start)
+        rss_peak = mem.peak_rss
+        rss_start = mem.start_rss
+        rss_end = mem.end_rss
 
         cfg = SCALE_CONFIGS.get(scale, SCALE_CONFIGS["quick"])
         orders_count = cfg["orders"]
@@ -86,14 +129,17 @@ class LakehouseBenchmark:
             throughput_rows_per_sec=throughput,
             disk_size_mb=disk_size_mb,
             peak_rss_mb=rss_peak,
+            start_rss_mb=rss_start,
+            end_rss_mb=rss_end,
             extra={"config": cfg},
         )
         self.metrics.append(metric)
-        print(f"    Rows: {orders_count:,} | Duration: {duration:.2f}s | Throughput: {throughput:,.0f} rows/s | Parquet Size: {disk_size_mb:.2f} MB | Peak RSS: {rss_peak:.1f} MB")
+        print(f"    Rows: {orders_count:,} | Duration: {duration:.2f}s | Throughput: {throughput:,.0f} rows/s | Parquet Size: {disk_size_mb:.2f} MB")
+        print(f"    Memory: Start: {rss_start:.1f} MB -> Peak: {rss_peak:.1f} MB -> End: {rss_end:.1f} MB")
         return metric
 
     def run_duckdb_profiling_benchmark(self) -> BenchmarkMetric:
-        """Benchmark SQL data profiling directly over Silver Parquet."""
+        """Benchmark SQL data profiling directly over Silver Parquet with continuous memory tracking."""
         from backend.dataset.profiler import DataProfiler
 
         print("\n[*] Running In-Engine Data Quality Profiling Benchmark...")
@@ -102,13 +148,16 @@ class LakehouseBenchmark:
             print("    [Warning] data/silver/orders.parquet not found, skipping profiling.")
             return BenchmarkMetric("DuckDB Profiling", "none", 0, 0, 0, 0, 0)
 
-        rss_start = get_current_rss_mb()
         t0 = time.perf_counter()
 
-        profile = DataProfiler.profile_parquet_file(orders_file, max_preview=50)
+        with ContinuousMemorySampler(interval_sec=0.01) as mem:
+            profile = DataProfiler.profile_parquet_file(orders_file, max_preview=50)
 
         duration = time.perf_counter() - t0
-        rss_peak = max(get_current_rss_mb(), rss_start)
+        rss_peak = mem.peak_rss
+        rss_start = mem.start_rss
+        rss_end = mem.end_rss
+
         row_count = profile.total_rows
         disk_size_mb = orders_file.stat().st_size / (1024 * 1024)
         throughput_mb_s = disk_size_mb / duration if duration > 0 else 0.0
@@ -121,6 +170,8 @@ class LakehouseBenchmark:
             throughput_rows_per_sec=throughput_mb_s,
             disk_size_mb=disk_size_mb,
             peak_rss_mb=rss_peak,
+            start_rss_mb=rss_start,
+            end_rss_mb=rss_end,
             extra={
                 "null_pct": profile.missing_cells_pct,
                 "duplicates": profile.duplicate_rows,
@@ -128,7 +179,8 @@ class LakehouseBenchmark:
             },
         )
         self.metrics.append(metric)
-        print(f"    Rows: {row_count:,} | Duration: {duration:.3f}s | Speed: {throughput_mb_s:.1f} MB/s | Peak RSS: {rss_peak:.1f} MB")
+        print(f"    Rows: {row_count:,} | Duration: {duration:.3f}s | Speed: {throughput_mb_s:.1f} MB/s")
+        print(f"    Memory: Start: {rss_start:.1f} MB -> Peak: {rss_peak:.1f} MB -> End: {rss_end:.1f} MB | Duplicates: {profile.duplicate_rows}")
         return metric
 
     def run_duckdb_olap_query_benchmark(self, iterations: int = 15) -> list[dict[str, Any]]:

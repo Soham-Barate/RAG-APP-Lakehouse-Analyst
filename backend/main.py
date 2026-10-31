@@ -148,8 +148,11 @@ def create_app() -> FastAPI:
 
     # ----- Routes -----
     @app.get("/", include_in_schema=False)
-    async def root() -> dict[str, str]:
-        """Root API metadata and operational endpoint index."""
+    async def root(request: Request):
+        """Root API endpoint: Redirects browser requests to /docs (Swagger UI), returns JSON for API clients."""
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept:
+            return RedirectResponse(url="/docs", status_code=307)
         return {
             "name": "RAG Lakehouse Analyst API",
             "version": "1.0.0",

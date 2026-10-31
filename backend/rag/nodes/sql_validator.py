@@ -127,9 +127,11 @@ class SQLASTValidator:
             if func_name in FORBIDDEN_FUNCTIONS:
                 raise SQLValidationError(f"Disallowed function call: '{func_name}'.")
 
-        # 5. Extract CTE aliases
+        # 5. Extract CTE aliases & disallow recursive CTEs
         cte_names: set[str] = set()
         for with_clause in stmt.find_all(exp.With):
+            if with_clause.args.get("recursive"):
+                raise SQLValidationError("Recursive CTEs are strictly forbidden.")
             for cte in with_clause.expressions:
                 if isinstance(cte, exp.CTE) and cte.alias:
                     cte_names.add(cte.alias.lower())
@@ -176,18 +178,28 @@ class SQLASTValidator:
                         f"Column '{col_name}' is not permitted in query. Allowed columns: {sorted(normalized_allowed_cols)}"
                     )
 
-        # 8. Enforce Limit Policy
-        limit_node = stmt.find(exp.Limit)
-        if limit_node is None:
-            # Append LIMIT max_limit
+        # 8. Enforce Root Query Limit Policy (Prevents subquery bypasses)
+        root_limit = stmt.args.get("limit")
+        if root_limit is None:
+            # Outermost query has no limit: strictly append LIMIT max_limit
             stmt = stmt.limit(max_limit)
         else:
             try:
-                curr_limit = int(limit_node.expression.name)
-                if curr_limit > max_limit:
-                    limit_node.set("expression", exp.Literal.number(max_limit))
+                curr_limit = int(root_limit.expression.name)
+                if curr_limit > max_limit or curr_limit < 1:
+                    root_limit.set("expression", exp.Literal.number(max_limit))
             except Exception:
-                limit_node.set("expression", exp.Literal.number(max_limit))
+                root_limit.set("expression", exp.Literal.number(max_limit))
+
+        # Also clamp any inner subquery limits to prevent intermediate memory exhaustion
+        for sub_limit in stmt.find_all(exp.Limit):
+            if sub_limit is not root_limit:
+                try:
+                    sub_val = int(sub_limit.expression.name)
+                    if sub_val > 10_000:
+                        sub_limit.set("expression", exp.Literal.number(10_000))
+                except Exception:
+                    pass
 
         # Re-generate clean DuckDB SQL
         return stmt.sql(dialect="duckdb")

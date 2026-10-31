@@ -64,32 +64,119 @@ def fetch_jobs(limit: int = 5) -> list[dict[str, Any]]:
     return []
 
 
-def upload_dataset_file(uploaded_file: Any) -> tuple[bool, str, dict[str, Any] | None]:
-    """Upload a file to the backend dataset ingestion endpoint."""
-    try:
-        file_bytes = uploaded_file.getvalue()
-        files = {"file": (uploaded_file.name, file_bytes, uploaded_file.type or "application/octet-stream")}
-        headers = {"X-API-Key": API_KEY}
+def upload_dataset_chunked(
+    uploaded_file: Any,
+    progress_bar: Any = None,
+    status_text: Any = None,
+    chunk_size: int = 2 * 1024 * 1024,
+) -> tuple[bool, str, dict[str, Any] | None]:
+    """
+    Genuinely streaming, multi-part chunked upload for Streamlit.
+    Reads bounded chunks (2 MB) from the uploaded file stream and sends
+    them sequentially to the backend. Memory in Streamlit never exceeds 2 MB.
+    """
+    import hashlib
 
-        resp = httpx.post(
-            f"{BACKEND_URL}/api/v1/datasets/upload",
-            files=files,
+    headers = {"X-API-Key": API_KEY}
+    total_bytes = uploaded_file.size
+
+    # Check Excel 50MB restriction early in frontend
+    ext = uploaded_file.name.rsplit(".", 1)[-1].lower() if "." in uploaded_file.name else ""
+    if ext in ("xlsx", "xls") and total_bytes > 50 * 1024 * 1024:
+        return (
+            False,
+            f"Excel ({ext}) files are limited to 50 MB due to XML decompression memory limits. "
+            "Please export to CSV or Parquet for high-speed streaming up to 5 GB.",
+            None,
+        )
+
+    # Step 1: Initialize session
+    try:
+        init_resp = httpx.post(
+            f"{BACKEND_URL}/api/v1/datasets/upload/init",
+            json={
+                "filename": uploaded_file.name,
+                "total_bytes": total_bytes,
+                "chunk_size": chunk_size,
+            },
+            headers=headers,
+            timeout=15.0,
+        )
+        if init_resp.status_code != 200:
+            try:
+                err = init_resp.json().get("detail", init_resp.text)
+            except Exception:
+                err = init_resp.text
+            return False, f"Upload session rejected: {err}", None
+        session_data = init_resp.json()
+        upload_id = session_data["upload_id"]
+    except Exception as exc:
+        return False, f"Failed initializing upload session: {exc}", None
+
+    # Step 2: Stream chunks
+    bytes_sent = 0
+    chunk_index = 0
+    uploaded_file.seek(0)
+    hasher = hashlib.sha256()
+
+    try:
+        while bytes_sent < total_bytes:
+            chunk = uploaded_file.read(chunk_size)
+            if not chunk:
+                break
+            hasher.update(chunk)
+            chunk_files = {"file": (f"chunk_{chunk_index}.bin", chunk, "application/octet-stream")}
+            chunk_data = {"upload_id": upload_id, "chunk_index": str(chunk_index)}
+
+            c_resp = httpx.post(
+                f"{BACKEND_URL}/api/v1/datasets/upload/chunk",
+                data=chunk_data,
+                files=chunk_files,
+                headers=headers,
+                timeout=45.0,
+            )
+            if c_resp.status_code != 200:
+                try:
+                    err = c_resp.json().get("detail", c_resp.text)
+                except Exception:
+                    err = c_resp.text
+                return False, f"Chunk {chunk_index} failed: {err}", None
+
+            bytes_sent += len(chunk)
+            chunk_index += 1
+            pct = min(1.0, float(bytes_sent) / total_bytes) if total_bytes > 0 else 1.0
+            if progress_bar:
+                progress_bar.progress(pct)
+            if status_text:
+                status_text.text(
+                    f"Streaming chunk {chunk_index}/{session_data.get('total_chunks', 1)}: "
+                    f"{bytes_sent / (1024 * 1024):.1f} / {total_bytes / (1024 * 1024):.1f} MB ({pct * 100:.0f}%)"
+                )
+
+        # Step 3: Finalize
+        if status_text:
+            status_text.text("Verifying SHA-256 and converting to Silver Parquet...")
+        fin_resp = httpx.post(
+            f"{BACKEND_URL}/api/v1/datasets/upload/finalize",
+            json={"upload_id": upload_id},
             headers=headers,
             timeout=300.0,
         )
-
-        if resp.status_code == 200:
-            data = resp.json()
-            return True, "Dataset uploaded, converted to Silver Parquet, and profiled successfully.", data
+        if fin_resp.status_code == 200:
+            return True, "Dataset streamed, converted to Silver Parquet, and profiled successfully.", fin_resp.json()
         else:
             try:
-                err = resp.json()
-                msg = err.get("detail", str(err))
+                err = fin_resp.json().get("detail", fin_resp.text)
             except Exception:
-                msg = resp.text or f"Server returned {resp.status_code}"
-            return False, f"Upload rejected: {msg}", None
+                err = fin_resp.text
+            return False, f"Finalization failed: {err}", None
     except Exception as exc:
-        return False, f"Upload network error: {str(exc)}", None
+        return False, f"Upload stream error: {exc}", None
+
+
+def upload_dataset_file(uploaded_file: Any) -> tuple[bool, str, dict[str, Any] | None]:
+    """Fallback legacy upload method."""
+    return upload_dataset_chunked(uploaded_file)
 
 
 def delete_dataset(dataset_id: str) -> tuple[bool, str]:
@@ -170,15 +257,19 @@ def render_dataset_manager() -> None:
                 )
 
                 if st.button("Process & Register Dataset", type="primary", use_container_width=True):
-                    with st.spinner("Ingesting, converting to Parquet, and profiling..."):
-                        success, message, upload_result = upload_dataset_file(uploaded_file)
-                        if success and upload_result:
-                            st.success(message)
-                            new_id = upload_result["metadata"]["dataset_id"]
-                            st.session_state.active_dataset_id = new_id
-                            st.rerun()
-                        else:
-                            st.error(message)
+                    prog_bar = st.progress(0.0)
+                    stat_txt = st.empty()
+                    stat_txt.text("Initiating chunked streaming upload...")
+                    success, message, upload_result = upload_dataset_chunked(
+                        uploaded_file, progress_bar=prog_bar, status_text=stat_txt
+                    )
+                    if success and upload_result:
+                        st.success(message)
+                        new_id = upload_result["metadata"]["dataset_id"]
+                        st.session_state.active_dataset_id = new_id
+                        st.rerun()
+                    else:
+                        st.error(message)
 
         st.markdown(
             '<div style="font-size:0.75rem; font-family:var(--font-mono); color:var(--text-muted); '

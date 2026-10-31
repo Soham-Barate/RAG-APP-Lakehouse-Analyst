@@ -72,3 +72,53 @@ def test_upload_and_delete_dataset_flow(api_client: TestClient):
     # 5. Confirm Deleted
     confirm_resp = api_client.get(f"/api/v1/datasets/{ds_id}")
     assert confirm_resp.status_code == 404
+
+
+def test_chunked_upload_flow(api_client: TestClient):
+    """Verify genuine chunked streaming upload lifecycle (init -> chunk -> finalize)."""
+    import hashlib
+    content = b"sensor_id,temperature,pressure\nS1,24.5,101.3\nS2,26.1,101.5\nS3,23.9,101.1\n"
+    sha256_hash = hashlib.sha256(content).hexdigest()
+    chunk_size = 20
+
+    # 1. Init
+    init_res = api_client.post(
+        "/api/v1/datasets/upload/init",
+        json={
+            "filename": "sensors.csv",
+            "total_bytes": len(content),
+            "chunk_size": chunk_size,
+            "checksum_sha256": sha256_hash,
+        },
+    )
+    assert init_res.status_code == 200, f"Init failed: {init_res.text}"
+    upload_id = init_res.json()["upload_id"]
+
+    # 2. Upload in chunks
+    offset = 0
+    chunk_idx = 0
+    while offset < len(content):
+        chunk = content[offset : offset + chunk_size]
+        chunk_res = api_client.post(
+            "/api/v1/datasets/upload/chunk",
+            data={"upload_id": upload_id, "chunk_index": str(chunk_idx)},
+            files={"file": (f"chunk_{chunk_idx}.bin", io.BytesIO(chunk), "application/octet-stream")},
+        )
+        assert chunk_res.status_code == 200, f"Chunk {chunk_idx} failed: {chunk_res.text}"
+        offset += len(chunk)
+        chunk_idx += 1
+
+    # 3. Finalize
+    fin_res = api_client.post(
+        "/api/v1/datasets/upload/finalize",
+        json={"upload_id": upload_id},
+    )
+    assert fin_res.status_code == 200, f"Finalize failed: {fin_res.text}"
+    fin_data = fin_res.json()
+    assert fin_data["success"] is True
+    assert fin_data["metadata"]["row_count"] == 3
+    assert fin_data["sha256"] == sha256_hash
+
+    # 4. Clean up
+    ds_id = fin_data["metadata"]["dataset_id"]
+    api_client.delete(f"/api/v1/datasets/{ds_id}")
