@@ -16,7 +16,7 @@ import structlog
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from backend.api.middleware.logging_mw import LoggingMiddleware
 from backend.api.routes import chat, feedback, health, ingest
@@ -147,6 +147,11 @@ def create_app() -> FastAPI:
         )
 
     # ----- Routes -----
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        """Redirect root URL to interactive Swagger API documentation."""
+        return RedirectResponse(url="/docs")
+
     app.include_router(health.router, prefix=API_V1_PREFIX)
     app.include_router(chat.router, prefix=API_V1_PREFIX)
     app.include_router(ingest.router, prefix=API_V1_PREFIX)
